@@ -129,12 +129,12 @@ def _make_client(token: str):
 
 
 def _call_llm(client, model: str, system: str, user: str, max_tokens: int = 4096) -> str:
-    """Make a single LLM call with retry on rate limit."""
-    from openai import RateLimitError
+    """Make a single LLM call with retry on rate limit and connection errors."""
+    from openai import APIConnectionError, RateLimitError
 
     is_reasoning = model.split("/")[-1].startswith("o") or model.endswith("gpt-5")
 
-    for attempt in range(8):
+    for attempt in range(12):
         try:
             if is_reasoning:
                 resp = client.chat.completions.create(
@@ -156,14 +156,15 @@ def _call_llm(client, model: str, system: str, user: str, max_tokens: int = 4096
                     max_completion_tokens=max_tokens,
                 )
             return resp.choices[0].message.content or ""
-        except RateLimitError:
-            wait = min(2 ** attempt * 3, 120)
-            click.echo(f"  Rate limited, waiting {wait}s...", err=True)
+        except (RateLimitError, APIConnectionError) as e:
+            wait = min(2 ** attempt * 3, 180)
+            kind = "Rate limited" if isinstance(e, RateLimitError) else "Connection error"
+            click.echo(f"  {kind}, waiting {wait}s (attempt {attempt+1}/12)...", err=True)
             time.sleep(wait)
         except Exception as e:
-            if "429" in str(e) or "rate" in str(e).lower():
-                wait = min(2 ** attempt * 3, 120)
-                click.echo(f"  Rate limited, waiting {wait}s...", err=True)
+            if "429" in str(e) or "rate" in str(e).lower() or "connection" in str(e).lower():
+                wait = min(2 ** attempt * 3, 180)
+                click.echo(f"  Retryable error, waiting {wait}s (attempt {attempt+1}/12)...", err=True)
                 time.sleep(wait)
             else:
                 raise
@@ -180,7 +181,13 @@ def analyze_activities_deep(
 
     Pass 1: Send each activity with full time-series data for detailed analysis.
     Pass 2: Send all per-activity summaries + user prompt for final synthesis.
+
+    Supports checkpoint/resume: saves per-activity results to a temp file so
+    interrupted runs can continue where they left off.
     """
+    import hashlib
+    import tempfile
+
     try:
         from openai import OpenAI
     except ImportError:
@@ -191,8 +198,6 @@ def analyze_activities_deep(
         raise click.ClickException("GitHub token required. Set GITHUB_TOKEN env var.")
 
     model = model or DEFAULT_MODEL
-    # Use gpt-4.1 for per-activity pass (fast, higher rate limit)
-    # and the requested model for synthesis
     fast_model = "openai/gpt-4.1"
     synthesis_model = model
     client = _make_client(token)
@@ -201,13 +206,35 @@ def analyze_activities_deep(
     activities = doc.get("activities", [])
     total = len(activities)
 
+    # Checkpoint file keyed by hash of activity data
+    data_hash = hashlib.sha256(json_data.encode()).hexdigest()[:12]
+    checkpoint_path = os.path.join(tempfile.gettempdir(), f"fit2json_deep_{data_hash}.json")
+
+    # Load existing checkpoint if available
+    checkpoint: dict = {}
+    if os.path.exists(checkpoint_path):
+        try:
+            with open(checkpoint_path) as f:
+                checkpoint = json.load(f)
+            done = len(checkpoint.get("analyses", {}))
+            click.echo(f"Resuming from checkpoint: {done}/{total} activities already analyzed.", err=True)
+        except (json.JSONDecodeError, OSError):
+            checkpoint = {}
+
+    analyses_map: dict = checkpoint.get("analyses", {})
+
     click.echo(f"Pass 1: Analyzing {total} activities individually with {fast_model}...", err=True)
 
-    per_activity_analyses: List[str] = []
     for i, act in enumerate(activities, 1):
         sport = act.get("sport", "unknown")
         date = (act.get("start_time") or "unknown")[:10]
         label = f"{date} {sport}"
+        key = f"{i}_{label}"
+
+        # Skip if already analyzed
+        if key in analyses_map:
+            click.echo(f"  [{i}/{total}] {label} (cached)", err=True)
+            continue
 
         activity_json = json.dumps(act, separators=(",", ":"), ensure_ascii=False)
         click.echo(f"  [{i}/{total}] {label} ({len(activity_json)} chars)", err=True)
@@ -218,9 +245,28 @@ def analyze_activities_deep(
             user=f"Workout data:\n```json\n{activity_json}\n```\n\n{PER_ACTIVITY_PROMPT}",
             max_tokens=512,
         )
-        per_activity_analyses.append(f"**{label}**: {analysis.strip()}")
-        # Pace requests to avoid rate limiting
+        analyses_map[key] = analysis.strip()
+
+        # Save checkpoint after each activity
+        checkpoint["analyses"] = analyses_map
+        try:
+            with open(checkpoint_path, "w") as f:
+                json.dump(checkpoint, f)
+        except OSError:
+            pass
+
         time.sleep(2)
+
+    # Build ordered list of analyses
+    per_activity_analyses = []
+    for i, act in enumerate(activities, 1):
+        sport = act.get("sport", "unknown")
+        date = (act.get("start_time") or "unknown")[:10]
+        label = f"{date} {sport}"
+        key = f"{i}_{label}"
+        text = analyses_map.get(key, "")
+        if text:
+            per_activity_analyses.append(f"**{label}**: {text}")
 
     # Pass 2: Synthesis
     click.echo(f"\nPass 2: Synthesizing {total} activity analyses with {synthesis_model}...", err=True)
@@ -274,6 +320,12 @@ def analyze_activities_deep(
                  f"Combine them into one comprehensive response:\n\n{combined}\n\n{prompt}",
             max_tokens=4096,
         )
+
+    # Clean up checkpoint on success
+    try:
+        os.remove(checkpoint_path)
+    except OSError:
+        pass
 
     click.echo("\n" + synthesis)
     return synthesis
