@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import os
 import sys
-from typing import Optional
+import time
+from typing import List, Optional
 
 import click
 
@@ -20,7 +21,17 @@ actionable feedback. Be specific — reference actual numbers from the data. \
 Keep your analysis concise but thorough. Use markdown formatting for readability.\
 """
 
-# GitHub Models token limits vary by model; keep well under to leave room for response
+PER_ACTIVITY_PROMPT = """\
+Analyze this single workout in 2-3 sentences. Note the sport, key metrics \
+(distance, duration, pace/speed, HR), and anything notable about the effort. \
+Be brief and data-driven.\
+"""
+
+SYNTHESIS_PROMPT = """\
+You are an expert fitness coach. Below are individual analyses of a person's \
+workouts over time. Synthesize these into a comprehensive fitness overview.\
+"""
+
 MAX_INPUT_CHARS = 11_000
 
 
@@ -110,25 +121,188 @@ def _compact_for_llm(json_data: str) -> str:
     return compact[:MAX_INPUT_CHARS] + "]"
 
 
+def _make_client(token: str):
+    """Create an OpenAI client for GitHub Models."""
+    from openai import OpenAI
+
+    return OpenAI(base_url=GITHUB_MODELS_ENDPOINT, api_key=token)
+
+
+def _call_llm(client, model: str, system: str, user: str, max_tokens: int = 4096) -> str:
+    """Make a single LLM call with retry on rate limit."""
+    from openai import RateLimitError
+
+    is_reasoning = model.split("/")[-1].startswith("o") or model.endswith("gpt-5")
+
+    for attempt in range(8):
+        try:
+            if is_reasoning:
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    max_completion_tokens=max_tokens,
+                )
+            else:
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    temperature=0.7,
+                    max_completion_tokens=max_tokens,
+                )
+            return resp.choices[0].message.content or ""
+        except RateLimitError:
+            wait = min(2 ** attempt * 3, 120)
+            click.echo(f"  Rate limited, waiting {wait}s...", err=True)
+            time.sleep(wait)
+        except Exception as e:
+            if "429" in str(e) or "rate" in str(e).lower():
+                wait = min(2 ** attempt * 3, 120)
+                click.echo(f"  Rate limited, waiting {wait}s...", err=True)
+                time.sleep(wait)
+            else:
+                raise
+    return ""
+
+
+def analyze_activities_deep(
+    json_data: str,
+    prompt: str,
+    model: Optional[str] = None,
+    token: Optional[str] = None,
+) -> str:
+    """Multi-pass analysis: analyze each activity individually, then synthesize.
+
+    Pass 1: Send each activity with full time-series data for detailed analysis.
+    Pass 2: Send all per-activity summaries + user prompt for final synthesis.
+    """
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise click.ClickException("openai package required. Install with: pip install openai")
+
+    token = token or os.environ.get("GITHUB_TOKEN")
+    if not token:
+        raise click.ClickException("GitHub token required. Set GITHUB_TOKEN env var.")
+
+    model = model or DEFAULT_MODEL
+    # Use gpt-4.1 for per-activity pass (fast, higher rate limit)
+    # and the requested model for synthesis
+    fast_model = "openai/gpt-4.1"
+    synthesis_model = model
+    client = _make_client(token)
+
+    doc = json.loads(json_data)
+    activities = doc.get("activities", [])
+    total = len(activities)
+
+    click.echo(f"Pass 1: Analyzing {total} activities individually with {fast_model}...", err=True)
+
+    per_activity_analyses: List[str] = []
+    for i, act in enumerate(activities, 1):
+        sport = act.get("sport", "unknown")
+        date = (act.get("start_time") or "unknown")[:10]
+        label = f"{date} {sport}"
+
+        activity_json = json.dumps(act, separators=(",", ":"), ensure_ascii=False)
+        click.echo(f"  [{i}/{total}] {label} ({len(activity_json)} chars)", err=True)
+
+        analysis = _call_llm(
+            client, fast_model,
+            system=SYSTEM_PROMPT,
+            user=f"Workout data:\n```json\n{activity_json}\n```\n\n{PER_ACTIVITY_PROMPT}",
+            max_tokens=512,
+        )
+        per_activity_analyses.append(f"**{label}**: {analysis.strip()}")
+        # Pace requests to avoid rate limiting
+        time.sleep(2)
+
+    # Pass 2: Synthesis
+    click.echo(f"\nPass 2: Synthesizing {total} activity analyses with {synthesis_model}...", err=True)
+
+    all_analyses = "\n\n".join(per_activity_analyses)
+
+    # If analyses fit in context, send them all
+    if len(all_analyses) <= MAX_INPUT_CHARS:
+        synthesis = _call_llm(
+            client, synthesis_model,
+            system=SYNTHESIS_PROMPT,
+            user=f"Here are individual workout analyses:\n\n{all_analyses}\n\n{prompt}",
+            max_tokens=4096,
+        )
+    else:
+        # Chunk the analyses into groups that fit
+        chunks = []
+        current_chunk = []
+        current_len = 0
+        chunk_limit = MAX_INPUT_CHARS - 500  # leave room for prompt
+
+        for analysis in per_activity_analyses:
+            if current_len + len(analysis) > chunk_limit and current_chunk:
+                chunks.append("\n\n".join(current_chunk))
+                current_chunk = []
+                current_len = 0
+            current_chunk.append(analysis)
+            current_len += len(analysis) + 2
+
+        if current_chunk:
+            chunks.append("\n\n".join(current_chunk))
+
+        click.echo(f"  Synthesizing in {len(chunks)} chunks...", err=True)
+
+        chunk_summaries = []
+        for j, chunk in enumerate(chunks, 1):
+            click.echo(f"  Chunk {j}/{len(chunks)}...", err=True)
+            summary = _call_llm(
+                client, synthesis_model,
+                system=SYNTHESIS_PROMPT,
+                user=f"Summarize these workout analyses into key trends and patterns:\n\n{chunk}",
+                max_tokens=2048,
+            )
+            chunk_summaries.append(summary)
+
+        combined = "\n\n---\n\n".join(chunk_summaries)
+        synthesis = _call_llm(
+            client, synthesis_model,
+            system=SYNTHESIS_PROMPT,
+            user=f"Here are partial fitness summaries covering different time periods. "
+                 f"Combine them into one comprehensive response:\n\n{combined}\n\n{prompt}",
+            max_tokens=4096,
+        )
+
+    click.echo("\n" + synthesis)
+    return synthesis
+
+
 def analyze_activities(
     json_data: str,
     prompt: str,
     model: Optional[str] = None,
     token: Optional[str] = None,
     stream: bool = True,
+    deep: bool = False,
 ) -> str:
     """Send activity JSON to GitHub Models API for analysis.
 
     Args:
         json_data: The activity JSON string to analyze.
         prompt: User's analysis prompt/question.
-        model: Model to use. Defaults to gpt-4o.
+        model: Model to use.
         token: GitHub personal access token. Falls back to GITHUB_TOKEN env var.
         stream: Whether to stream the response.
+        deep: If True, use multi-pass per-activity analysis.
 
     Returns:
         The LLM's analysis response text.
     """
+    if deep:
+        return analyze_activities_deep(json_data, prompt, model, token)
+
     try:
         from openai import OpenAI
     except ImportError:

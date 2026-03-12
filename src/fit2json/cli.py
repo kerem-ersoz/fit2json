@@ -147,10 +147,11 @@ def fetch_strava(days: int, output_path: Optional[str], client_id: Optional[str]
 @cli.command()
 @click.argument("file", type=click.Path(exists=True), required=False)
 @click.option("-p", "--prompt", required=True, help="Analysis prompt or question.")
-@click.option("--model", default=None, help="Model to use (default: gemini-3-pro-preview).")
+@click.option("--model", default=None, help="Model to use (default: gpt-5-chat).")
 @click.option("--token", default=None, help="GitHub personal access token.")
 @click.option("--no-stream", is_flag=True, help="Disable streaming output.")
-def analyze(file: Optional[str], prompt: str, model: Optional[str], token: Optional[str], no_stream: bool):
+@click.option("--deep", is_flag=True, help="Multi-pass analysis: each activity gets full context, then synthesized.")
+def analyze(file: Optional[str], prompt: str, model: Optional[str], token: Optional[str], no_stream: bool, deep: bool):
     """Analyze activity JSON with AI using GitHub Models API.
 
     Reads JSON from FILE or stdin (for piping from convert).
@@ -172,6 +173,7 @@ def analyze(file: Optional[str], prompt: str, model: Optional[str], token: Optio
         model=model,
         token=token,
         stream=not no_stream,
+        deep=deep,
     )
 
 
