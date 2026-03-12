@@ -255,7 +255,7 @@ fit2json analyze output.json --prompt "How is my running fitness trending?"
 fit2json convert activity.fit | fit2json analyze --prompt "Give me a race report"
 
 # Use a specific model
-fit2json analyze output.json --prompt "Analyze my HR zones" --model gpt-4o
+fit2json analyze output.json --prompt "Analyze my HR zones" --model gemini-3-pro-preview
 
 # Disable streaming
 fit2json analyze output.json --prompt "Summarize this week" --no-stream
@@ -266,7 +266,7 @@ fit2json analyze output.json --prompt "Summarize this week" --no-stream
 | Option | Description |
 |--------|-------------|
 | `-p, --prompt TEXT` | **(Required)** Your analysis question or prompt. |
-| `--model TEXT` | Model to use (default: `gpt-4o`). |
+| `--model TEXT` | Model to use (default: `gemini-3-pro-preview`). |
 | `--token TEXT` | GitHub personal access token (or set `GITHUB_TOKEN`). |
 | `--no-stream` | Disable streaming output. |
 

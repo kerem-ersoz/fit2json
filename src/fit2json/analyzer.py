@@ -9,7 +9,7 @@ from typing import Optional
 import click
 
 
-DEFAULT_MODEL = "gpt-4o"
+DEFAULT_MODEL = "gemini-3-pro-preview"
 GITHUB_MODELS_ENDPOINT = "https://models.github.ai/inference"
 
 SYSTEM_PROMPT = """\

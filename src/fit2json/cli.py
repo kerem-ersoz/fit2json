@@ -147,7 +147,7 @@ def fetch_strava(days: int, output_path: Optional[str], client_id: Optional[str]
 @cli.command()
 @click.argument("file", type=click.Path(exists=True), required=False)
 @click.option("-p", "--prompt", required=True, help="Analysis prompt or question.")
-@click.option("--model", default=None, help="Model to use (default: gpt-4o).")
+@click.option("--model", default=None, help="Model to use (default: gemini-3-pro-preview).")
 @click.option("--token", default=None, help="GitHub personal access token.")
 @click.option("--no-stream", is_flag=True, help="Disable streaming output.")
 def analyze(file: Optional[str], prompt: str, model: Optional[str], token: Optional[str], no_stream: bool):
