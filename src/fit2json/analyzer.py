@@ -82,9 +82,32 @@ def _compact_for_llm(json_data: str) -> str:
         )
         return compact
 
-    # Last resort: truncate
-    click.echo("Note: Activity data is very large; truncating to fit context window.", err=True)
-    return compact[:MAX_INPUT_CHARS] + "\n... (truncated)"
+    # Fourth pass: ultra-compact — flat list with only key metrics, all activities kept
+    ultra = []
+    for act in activities:
+        s = act.get("summary", {})
+        ultra.append({
+            "sport": act.get("sport"),
+            "date": (act.get("start_time") or "")[:10],
+            "km": s.get("total_distance_km"),
+            "dur_s": s.get("total_duration_s"),
+            "hr": s.get("avg_heart_rate_bpm"),
+            "spd": s.get("avg_speed_kmh"),
+        })
+    compact = json.dumps(ultra, separators=(",", ":"), ensure_ascii=False)
+    if len(compact) <= MAX_INPUT_CHARS:
+        click.echo(
+            f"Note: Using ultra-compact format to fit all {len(activities)} activities in context.",
+            err=True,
+        )
+        return compact
+
+    # Last resort: truncate the ultra-compact list
+    click.echo(
+        f"Note: Truncating ultra-compact data to fit context window ({len(activities)} activities).",
+        err=True,
+    )
+    return compact[:MAX_INPUT_CHARS] + "]"
 
 
 def analyze_activities(
