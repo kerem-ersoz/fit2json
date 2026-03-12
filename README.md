@@ -17,6 +17,17 @@ The output JSON includes activity summaries, lap splits, and 1-minute time-serie
 
 ## Installation
 
+### Option 1: Docker (Recommended — no Python required)
+
+```bash
+docker pull ghcr.io/kerem-ersoz/fit2json:latest
+
+# Verify
+docker run --rm ghcr.io/kerem-ersoz/fit2json --version
+```
+
+### Option 2: Install from source
+
 ### Prerequisites
 
 - Python 3.9 or later
@@ -64,6 +75,84 @@ fit2json analyze run.json --prompt "How was my pacing strategy?"
 
 # Pipeline: convert and analyze in one shot
 fit2json convert my_run.fit | fit2json analyze --prompt "Give me a race report"
+```
+
+---
+
+## Docker Usage
+
+The Docker image lets you run fit2json on any platform without installing Python. The container's working directory is `/data`.
+
+### Convert local .fit files
+
+Mount your `.fit` files into the container:
+
+```bash
+# Single file
+docker run --rm -v "$(pwd)":/data ghcr.io/kerem-ersoz/fit2json convert /data/my_run.fit -o /data/output.json
+
+# Entire directory
+docker run --rm -v ~/Downloads/garmin-export:/data ghcr.io/kerem-ersoz/fit2json convert /data/ -o /data/all-activities.json
+
+# Output to stdout (pipe-friendly)
+docker run --rm -v "$(pwd)":/data ghcr.io/kerem-ersoz/fit2json convert /data/my_run.fit
+```
+
+### Fetch from Garmin Connect
+
+Pass credentials via environment variables:
+
+```bash
+docker run --rm \
+  -e GARMIN_EMAIL=you@email.com \
+  -e GARMIN_PASSWORD=yourpassword \
+  -v "$(pwd)":/data \
+  ghcr.io/kerem-ersoz/fit2json fetch garmin --days 7 -o /data/this-week.json
+```
+
+### Fetch from Strava
+
+```bash
+docker run --rm \
+  -e STRAVA_CLIENT_ID=your_id \
+  -e STRAVA_CLIENT_SECRET=your_secret \
+  -e STRAVA_REFRESH_TOKEN=your_token \
+  -v "$(pwd)":/data \
+  ghcr.io/kerem-ersoz/fit2json fetch strava --days 30 -o /data/recent.json
+```
+
+### Analyze with AI
+
+```bash
+docker run --rm \
+  -e GITHUB_TOKEN=ghp_your_token \
+  -v "$(pwd)":/data \
+  ghcr.io/kerem-ersoz/fit2json analyze /data/output.json --prompt "How was my pacing?"
+```
+
+### Pipeline: convert + analyze
+
+```bash
+docker run --rm -v "$(pwd)":/data ghcr.io/kerem-ersoz/fit2json convert /data/my_run.fit \
+  | docker run --rm -i -e GITHUB_TOKEN=ghp_your_token ghcr.io/kerem-ersoz/fit2json analyze --prompt "Race report"
+```
+
+### Using a .env file
+
+```bash
+docker run --rm --env-file .env -v "$(pwd)":/data ghcr.io/kerem-ersoz/fit2json fetch garmin --days 7 -o /data/week.json
+```
+
+### Shell alias (optional)
+
+Add to your `~/.bashrc` or `~/.zshrc` for convenience:
+
+```bash
+alias fit2json='docker run --rm --env-file ~/.fit2json.env -v "$(pwd)":/data ghcr.io/kerem-ersoz/fit2json'
+
+# Then use normally:
+fit2json convert my_run.fit -o output.json
+fit2json analyze output.json --prompt "How was my run?"
 ```
 
 ---
