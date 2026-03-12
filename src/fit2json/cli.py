@@ -161,6 +161,8 @@ def analyze(file: Optional[str], prompt: str, model: Optional[str], token: Optio
         json_data = Path(file).read_text(encoding="utf-8")
     elif not sys.stdin.isatty():
         json_data = sys.stdin.read()
+        if not json_data.strip():
+            raise click.ClickException("No data received from stdin.")
     else:
         raise click.ClickException("Provide a JSON file or pipe data from stdin.")
 

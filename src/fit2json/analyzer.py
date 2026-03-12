@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from typing import Optional
@@ -9,7 +10,7 @@ from typing import Optional
 import click
 
 
-DEFAULT_MODEL = "gemini-3-pro-preview"
+DEFAULT_MODEL = "openai/o3"
 GITHUB_MODELS_ENDPOINT = "https://models.github.ai/inference"
 
 SYSTEM_PROMPT = """\
@@ -18,6 +19,72 @@ You analyze workout data provided as structured JSON and give insightful, \
 actionable feedback. Be specific — reference actual numbers from the data. \
 Keep your analysis concise but thorough. Use markdown formatting for readability.\
 """
+
+# GitHub Models token limits vary by model; keep well under to leave room for response
+MAX_INPUT_CHARS = 8_000
+
+
+def _compact_for_llm(json_data: str) -> str:
+    """Intelligently compact activity JSON for LLM consumption.
+
+    For large datasets (many activities), strips time_series_1min data and keeps
+    only summaries and laps. For small datasets, keeps everything.
+    """
+    if len(json_data) <= MAX_INPUT_CHARS:
+        return json_data
+
+    try:
+        doc = json.loads(json_data)
+    except json.JSONDecodeError:
+        return json_data[:MAX_INPUT_CHARS] + "\n... (truncated)"
+
+    activities = doc.get("activities", [])
+
+    # First pass: remove time series
+    for act in activities:
+        act.pop("time_series_1min", None)
+
+    compact = json.dumps(doc, separators=(",", ":"), ensure_ascii=False)
+    if len(compact) <= MAX_INPUT_CHARS:
+        click.echo(
+            f"Note: Removed time-series data to fit {len(activities)} activities in context.",
+            err=True,
+        )
+        return compact
+
+    # Second pass: also remove laps
+    for act in activities:
+        act.pop("laps", None)
+
+    compact = json.dumps(doc, separators=(",", ":"), ensure_ascii=False)
+    if len(compact) <= MAX_INPUT_CHARS:
+        click.echo(
+            f"Note: Removed time-series and lap data to fit {len(activities)} activities in context.",
+            err=True,
+        )
+        return compact
+
+    # Third pass: keep only essential summary fields
+    essential_keys = {
+        "total_distance_km", "total_duration_s", "avg_pace_min_per_km",
+        "avg_heart_rate_bpm", "max_heart_rate_bpm", "avg_speed_kmh",
+        "total_calories", "total_ascent_m",
+    }
+    for act in activities:
+        summary = act.get("summary", {})
+        act["summary"] = {k: v for k, v in summary.items() if k in essential_keys}
+
+    compact = json.dumps(doc, separators=(",", ":"), ensure_ascii=False)
+    if len(compact) <= MAX_INPUT_CHARS:
+        click.echo(
+            f"Note: Using minimal summaries to fit {len(activities)} activities in context.",
+            err=True,
+        )
+        return compact
+
+    # Last resort: truncate
+    click.echo("Note: Activity data is very large; truncating to fit context window.", err=True)
+    return compact[:MAX_INPUT_CHARS] + "\n... (truncated)"
 
 
 def analyze_activities(
@@ -58,10 +125,7 @@ def analyze_activities(
         api_key=token,
     )
 
-    # Truncate JSON if extremely large (keep under ~100k chars for context)
-    if len(json_data) > 100_000:
-        click.echo("Note: Activity data is large; truncating to fit context window.", err=True)
-        json_data = json_data[:100_000] + "\n... (truncated)"
+    json_data = _compact_for_llm(json_data)
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -71,7 +135,20 @@ def analyze_activities(
         },
     ]
 
-    if stream:
+    # Reasoning models (o-series) don't support temperature or streaming
+    is_reasoning = "/o" in model or model.startswith("o")
+
+    if is_reasoning:
+        click.echo("Using reasoning model — this may take a moment...", err=True)
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_completion_tokens=16384,
+        )
+        text = response.choices[0].message.content or ""
+        click.echo(text)
+        return text
+    elif stream:
         response_text = ""
         stream_resp = client.chat.completions.create(
             model=model,
