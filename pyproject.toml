@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fit2json"
+version = "0.1.0"
+description = "Convert Garmin/Strava .fit files to LLM-ready JSON and analyze with GitHub Models API"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    { name = "Kerem Ersoz" },
+]
+dependencies = [
+    "fitdecode>=0.10.0",
+    "click>=8.1.0",
+    "openai>=1.0.0",
+    "requests>=2.31.0",
+    "garminconnect>=0.2.0",
+    "stravalib>=1.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+fit2json = "fit2json.cli:cli"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
