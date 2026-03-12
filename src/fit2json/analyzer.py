@@ -10,7 +10,7 @@ from typing import Optional
 import click
 
 
-DEFAULT_MODEL = "openai/o3"
+DEFAULT_MODEL = "openai/gpt-5-chat"
 GITHUB_MODELS_ENDPOINT = "https://models.github.ai/inference"
 
 SYSTEM_PROMPT = """\
@@ -21,7 +21,7 @@ Keep your analysis concise but thorough. Use markdown formatting for readability
 """
 
 # GitHub Models token limits vary by model; keep well under to leave room for response
-MAX_INPUT_CHARS = 8_000
+MAX_INPUT_CHARS = 11_000
 
 
 def _compact_for_llm(json_data: str) -> str:
@@ -135,11 +135,11 @@ def analyze_activities(
         },
     ]
 
-    # Reasoning models (o-series) don't support temperature or streaming
-    is_reasoning = "/o" in model or model.startswith("o")
+    # Reasoning models don't support temperature or streaming
+    is_reasoning = model.split("/")[-1].startswith("o") or model.endswith("gpt-5")
 
     if is_reasoning:
-        click.echo("Using reasoning model — this may take a moment...", err=True)
+        click.echo(f"Using {model} — this may take a moment...", err=True)
         response = client.chat.completions.create(
             model=model,
             messages=messages,
@@ -155,7 +155,7 @@ def analyze_activities(
             messages=messages,
             stream=True,
             temperature=0.7,
-            max_tokens=4096,
+            max_completion_tokens=4096,
         )
         for chunk in stream_resp:
             if chunk.choices and chunk.choices[0].delta.content:
@@ -170,7 +170,7 @@ def analyze_activities(
             model=model,
             messages=messages,
             temperature=0.7,
-            max_tokens=4096,
+            max_completion_tokens=4096,
         )
         text = response.choices[0].message.content or ""
         click.echo(text)
