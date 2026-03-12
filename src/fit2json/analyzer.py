@@ -1,4 +1,4 @@
-"""GitHub Models API integration for LLM-powered activity analysis."""
+"""LLM-powered activity analysis — supports OpenAI, Ollama, and any OpenAI-compatible API."""
 
 from __future__ import annotations
 
@@ -11,8 +11,12 @@ from typing import List, Optional
 import click
 
 
-DEFAULT_MODEL = "openai/gpt-5-chat"
-GITHUB_MODELS_ENDPOINT = "https://models.github.ai/inference"
+# Provider presets: (base_url, env_var_for_key, default_model)
+PROVIDERS = {
+    "openai": ("https://api.openai.com/v1", "OPENAI_API_KEY", "gpt-4.1"),
+    "ollama": ("http://localhost:11434/v1", None, "llama3.1"),
+    "github": ("https://models.github.ai/inference", "GITHUB_TOKEN", "openai/gpt-5-chat"),
+}
 
 SYSTEM_PROMPT = """\
 You are an expert running/cycling/fitness coach and data analyst. \
@@ -32,22 +36,58 @@ You are an expert fitness coach. Below are individual analyses of a person's \
 workouts over time. Synthesize these into a comprehensive fitness overview.\
 """
 
-MAX_INPUT_CHARS = 11_000
+# Default context budget — can be overridden via --max-chars
+MAX_INPUT_CHARS = 100_000
 
 
-def _compact_for_llm(json_data: str) -> str:
+def _resolve_provider(
+    provider: Optional[str],
+    base_url: Optional[str],
+    api_key: Optional[str],
+    model: Optional[str],
+) -> tuple:
+    """Resolve provider settings into (base_url, api_key, model).
+
+    Auto-detects provider from available env vars if not specified.
+    """
+    if base_url:
+        # Custom endpoint — use as-is
+        key = api_key or os.environ.get("OPENAI_API_KEY") or os.environ.get("GITHUB_TOKEN") or "no-key"
+        mdl = model or "gpt-4.1"
+        return base_url, key, mdl
+
+    if provider:
+        preset = PROVIDERS.get(provider)
+        if not preset:
+            raise click.ClickException(f"Unknown provider '{provider}'. Choose from: {', '.join(PROVIDERS)}")
+        url, env_var, default_model = preset
+        key = api_key or (os.environ.get(env_var) if env_var else "ollama")
+        if not key:
+            raise click.ClickException(f"API key required for {provider}. Set {env_var} or pass --api-key.")
+        return url, key, model or default_model
+
+    # Auto-detect: prefer OpenAI > Ollama > GitHub Models
+    if api_key or os.environ.get("OPENAI_API_KEY"):
+        key = api_key or os.environ.get("OPENAI_API_KEY")
+        return PROVIDERS["openai"][0], key, model or PROVIDERS["openai"][2]
+    if os.environ.get("GITHUB_TOKEN"):
+        return PROVIDERS["github"][0], os.environ["GITHUB_TOKEN"], model or PROVIDERS["github"][2]
+    # Fallback to Ollama (no key needed)
+    return PROVIDERS["ollama"][0], "ollama", model or PROVIDERS["ollama"][2]
+
+
+def _compact_for_llm(json_data: str, max_chars: int = MAX_INPUT_CHARS) -> str:
     """Intelligently compact activity JSON for LLM consumption.
 
-    For large datasets (many activities), strips time_series_1min data and keeps
-    only summaries and laps. For small datasets, keeps everything.
+    Progressively strips detail to fit within max_chars.
     """
-    if len(json_data) <= MAX_INPUT_CHARS:
+    if len(json_data) <= max_chars:
         return json_data
 
     try:
         doc = json.loads(json_data)
     except json.JSONDecodeError:
-        return json_data[:MAX_INPUT_CHARS] + "\n... (truncated)"
+        return json_data[:max_chars] + "\n... (truncated)"
 
     activities = doc.get("activities", [])
 
@@ -56,7 +96,7 @@ def _compact_for_llm(json_data: str) -> str:
         act.pop("time_series_1min", None)
 
     compact = json.dumps(doc, separators=(",", ":"), ensure_ascii=False)
-    if len(compact) <= MAX_INPUT_CHARS:
+    if len(compact) <= max_chars:
         click.echo(
             f"Note: Removed time-series data to fit {len(activities)} activities in context.",
             err=True,
@@ -68,7 +108,7 @@ def _compact_for_llm(json_data: str) -> str:
         act.pop("laps", None)
 
     compact = json.dumps(doc, separators=(",", ":"), ensure_ascii=False)
-    if len(compact) <= MAX_INPUT_CHARS:
+    if len(compact) <= max_chars:
         click.echo(
             f"Note: Removed time-series and lap data to fit {len(activities)} activities in context.",
             err=True,
@@ -86,14 +126,14 @@ def _compact_for_llm(json_data: str) -> str:
         act["summary"] = {k: v for k, v in summary.items() if k in essential_keys}
 
     compact = json.dumps(doc, separators=(",", ":"), ensure_ascii=False)
-    if len(compact) <= MAX_INPUT_CHARS:
+    if len(compact) <= max_chars:
         click.echo(
             f"Note: Using minimal summaries to fit {len(activities)} activities in context.",
             err=True,
         )
         return compact
 
-    # Fourth pass: ultra-compact — flat list with only key metrics, all activities kept
+    # Fourth pass: ultra-compact — flat list with only key metrics
     ultra = []
     for act in activities:
         s = act.get("summary", {})
@@ -106,26 +146,26 @@ def _compact_for_llm(json_data: str) -> str:
             "spd": s.get("avg_speed_kmh"),
         })
     compact = json.dumps(ultra, separators=(",", ":"), ensure_ascii=False)
-    if len(compact) <= MAX_INPUT_CHARS:
+    if len(compact) <= max_chars:
         click.echo(
             f"Note: Using ultra-compact format to fit all {len(activities)} activities in context.",
             err=True,
         )
         return compact
 
-    # Last resort: truncate the ultra-compact list
+    # Last resort: truncate
     click.echo(
         f"Note: Truncating ultra-compact data to fit context window ({len(activities)} activities).",
         err=True,
     )
-    return compact[:MAX_INPUT_CHARS] + "]"
+    return compact[:max_chars] + "]"
 
 
-def _make_client(token: str):
-    """Create an OpenAI client for GitHub Models."""
+def _make_client(base_url: str, api_key: str):
+    """Create an OpenAI-compatible client."""
     from openai import OpenAI
 
-    return OpenAI(base_url=GITHUB_MODELS_ENDPOINT, api_key=token)
+    return OpenAI(base_url=base_url, api_key=api_key)
 
 
 def _call_llm(client, model: str, system: str, user: str, max_tokens: int = 4096) -> str:
@@ -175,7 +215,10 @@ def analyze_activities_deep(
     json_data: str,
     prompt: str,
     model: Optional[str] = None,
-    token: Optional[str] = None,
+    provider: Optional[str] = None,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    fast_model: Optional[str] = None,
 ) -> str:
     """Multi-pass analysis: analyze each activity individually, then synthesize.
 
@@ -193,14 +236,20 @@ def analyze_activities_deep(
     except ImportError:
         raise click.ClickException("openai package required. Install with: pip install openai")
 
-    token = token or os.environ.get("GITHUB_TOKEN")
-    if not token:
-        raise click.ClickException("GitHub token required. Set GITHUB_TOKEN env var.")
+    url, key, resolved_model = _resolve_provider(provider, base_url, api_key, model)
+    synthesis_model = resolved_model
 
-    model = model or DEFAULT_MODEL
-    fast_model = "openai/gpt-4.1"
-    synthesis_model = model
-    client = _make_client(token)
+    # Fast model for per-activity pass: user-specified or auto-pick based on provider
+    if fast_model:
+        p1_model = fast_model
+    elif "openai.com" in url:
+        p1_model = "gpt-4.1-mini"
+    elif "github" in url:
+        p1_model = "openai/gpt-4.1"
+    else:
+        p1_model = resolved_model  # Ollama / custom: use same model
+
+    client = _make_client(url, key)
 
     doc = json.loads(json_data)
     activities = doc.get("activities", [])
@@ -223,7 +272,7 @@ def analyze_activities_deep(
 
     analyses_map: dict = checkpoint.get("analyses", {})
 
-    click.echo(f"Pass 1: Analyzing {total} activities individually with {fast_model}...", err=True)
+    click.echo(f"Pass 1: Analyzing {total} activities individually with {p1_model}...", err=True)
 
     for i, act in enumerate(activities, 1):
         sport = act.get("sport", "unknown")
@@ -240,7 +289,7 @@ def analyze_activities_deep(
         click.echo(f"  [{i}/{total}] {label} ({len(activity_json)} chars)", err=True)
 
         analysis = _call_llm(
-            client, fast_model,
+            client, p1_model,
             system=SYSTEM_PROMPT,
             user=f"Workout data:\n```json\n{activity_json}\n```\n\n{PER_ACTIVITY_PROMPT}",
             max_tokens=512,
@@ -335,46 +384,50 @@ def analyze_activities(
     json_data: str,
     prompt: str,
     model: Optional[str] = None,
-    token: Optional[str] = None,
+    provider: Optional[str] = None,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
     stream: bool = True,
     deep: bool = False,
+    fast_model: Optional[str] = None,
+    max_chars: Optional[int] = None,
 ) -> str:
-    """Send activity JSON to GitHub Models API for analysis.
+    """Send activity JSON to an LLM for analysis.
+
+    Supports OpenAI, Ollama, GitHub Models, and any OpenAI-compatible endpoint.
+    Auto-detects provider from environment variables if not specified.
 
     Args:
         json_data: The activity JSON string to analyze.
         prompt: User's analysis prompt/question.
-        model: Model to use.
-        token: GitHub personal access token. Falls back to GITHUB_TOKEN env var.
+        model: Model to use (provider-specific).
+        provider: Provider name: 'openai', 'ollama', or 'github'.
+        base_url: Custom OpenAI-compatible API base URL.
+        api_key: API key. Falls back to env vars per provider.
         stream: Whether to stream the response.
         deep: If True, use multi-pass per-activity analysis.
+        fast_model: Model for per-activity pass in deep mode.
+        max_chars: Max input chars for compaction (default: 100K).
 
     Returns:
         The LLM's analysis response text.
     """
     if deep:
-        return analyze_activities_deep(json_data, prompt, model, token)
+        return analyze_activities_deep(
+            json_data, prompt, model=model, provider=provider,
+            base_url=base_url, api_key=api_key, fast_model=fast_model,
+        )
 
     try:
         from openai import OpenAI
     except ImportError:
         raise click.ClickException("openai package required. Install with: pip install openai")
 
-    token = token or os.environ.get("GITHUB_TOKEN")
-    if not token:
-        raise click.ClickException(
-            "GitHub token required for analysis. Set GITHUB_TOKEN environment variable "
-            "or pass --token. Get a token at https://github.com/settings/tokens"
-        )
+    url, key, resolved_model = _resolve_provider(provider, base_url, api_key, model)
+    client = OpenAI(base_url=url, api_key=key)
 
-    model = model or DEFAULT_MODEL
-
-    client = OpenAI(
-        base_url=GITHUB_MODELS_ENDPOINT,
-        api_key=token,
-    )
-
-    json_data = _compact_for_llm(json_data)
+    budget = max_chars or MAX_INPUT_CHARS
+    json_data = _compact_for_llm(json_data, max_chars=budget)
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -385,12 +438,13 @@ def analyze_activities(
     ]
 
     # Reasoning models don't support temperature or streaming
-    is_reasoning = model.split("/")[-1].startswith("o") or model.endswith("gpt-5")
+    bare_model = resolved_model.split("/")[-1]
+    is_reasoning = bare_model.startswith("o") or bare_model.endswith("gpt-5")
 
     if is_reasoning:
-        click.echo(f"Using {model} — this may take a moment...", err=True)
+        click.echo(f"Using {resolved_model} — this may take a moment...", err=True)
         response = client.chat.completions.create(
-            model=model,
+            model=resolved_model,
             messages=messages,
             max_completion_tokens=16384,
         )
@@ -400,7 +454,7 @@ def analyze_activities(
     elif stream:
         response_text = ""
         stream_resp = client.chat.completions.create(
-            model=model,
+            model=resolved_model,
             messages=messages,
             stream=True,
             temperature=0.7,
@@ -416,7 +470,7 @@ def analyze_activities(
         return response_text
     else:
         response = client.chat.completions.create(
-            model=model,
+            model=resolved_model,
             messages=messages,
             temperature=0.7,
             max_completion_tokens=4096,

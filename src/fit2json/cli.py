@@ -147,12 +147,22 @@ def fetch_strava(days: int, output_path: Optional[str], client_id: Optional[str]
 @cli.command()
 @click.argument("file", type=click.Path(exists=True), required=False)
 @click.option("-p", "--prompt", required=True, help="Analysis prompt or question.")
-@click.option("--model", default=None, help="Model to use (default: gpt-5-chat).")
-@click.option("--token", default=None, help="GitHub personal access token.")
+@click.option("--model", default=None, help="Model name (e.g. gpt-4.1, llama3.1).")
+@click.option("--provider", default=None, type=click.Choice(["openai", "ollama", "github"]), help="LLM provider. Auto-detected from env vars if omitted.")
+@click.option("--base-url", default=None, help="Custom OpenAI-compatible API base URL.")
+@click.option("--api-key", default=None, help="API key (or set OPENAI_API_KEY / GITHUB_TOKEN).")
 @click.option("--no-stream", is_flag=True, help="Disable streaming output.")
 @click.option("--deep", is_flag=True, help="Multi-pass analysis: each activity gets full context, then synthesized.")
-def analyze(file: Optional[str], prompt: str, model: Optional[str], token: Optional[str], no_stream: bool, deep: bool):
-    """Analyze activity JSON with AI using GitHub Models API.
+@click.option("--fast-model", default=None, help="Model for per-activity pass in --deep mode (default: auto).")
+@click.option("--max-chars", default=None, type=int, help="Max input chars for context (default: 100K).")
+def analyze(file: Optional[str], prompt: str, model: Optional[str], provider: Optional[str],
+            base_url: Optional[str], api_key: Optional[str], no_stream: bool, deep: bool,
+            fast_model: Optional[str], max_chars: Optional[int]):
+    """Analyze activity JSON with AI.
+
+    Supports OpenAI, Ollama, and any OpenAI-compatible API.
+    Auto-detects provider: OPENAI_API_KEY → OpenAI, GITHUB_TOKEN → GitHub Models,
+    otherwise → Ollama (localhost).
 
     Reads JSON from FILE or stdin (for piping from convert).
     """
@@ -171,9 +181,13 @@ def analyze(file: Optional[str], prompt: str, model: Optional[str], token: Optio
         json_data=json_data,
         prompt=prompt,
         model=model,
-        token=token,
+        provider=provider,
+        base_url=base_url,
+        api_key=api_key,
         stream=not no_stream,
         deep=deep,
+        fast_model=fast_model,
+        max_chars=max_chars,
     )
 
 

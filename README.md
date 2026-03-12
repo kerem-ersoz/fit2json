@@ -1,6 +1,6 @@
 # fit2json
 
-Convert Garmin Connect and Strava `.fit` files into structured, LLM-ready JSON — then analyze your workouts with AI using GitHub Models API.
+Convert Garmin Connect and Strava `.fit` files into structured, LLM-ready JSON — then analyze your workouts with AI.
 
 ## What It Does
 
@@ -9,7 +9,7 @@ Convert Garmin Connect and Strava `.fit` files into structured, LLM-ready JSON �
 1. **Parses** `.fit` files (the binary format used by Garmin, Wahoo, and other fitness devices)
 2. **Converts** them to compact, structured JSON optimized for LLM context windows
 3. **Fetches** activities directly from Garmin Connect or Strava APIs
-4. **Analyzes** your workout data using AI (powered by GitHub Models API)
+4. **Analyzes** your workout data using AI — supports **OpenAI**, **Ollama** (local), and any OpenAI-compatible API
 
 The output JSON includes activity summaries, lap splits, and 1-minute time-series samples (heart rate, cadence, speed, power) — detailed enough for meaningful AI analysis while staying compact enough to fit in an LLM prompt.
 
@@ -31,7 +31,10 @@ docker run --rm ghcr.io/kerem-ersoz/fit2json --version
 ### Prerequisites
 
 - Python 3.9 or later
-- A GitHub account with Copilot subscription (for the `analyze` command)
+- An API key for your preferred LLM provider (for the `analyze` command):
+  - **OpenAI API** (recommended) — set `OPENAI_API_KEY`
+  - **Ollama** (free, local) — no key needed, just have Ollama running
+  - **GitHub Models** — set `GITHUB_TOKEN` (rate-limited on free tier)
 
 ### Install from source
 
@@ -124,17 +127,24 @@ docker run --rm \
 ### Analyze with AI
 
 ```bash
+# With OpenAI
 docker run --rm \
-  -e GITHUB_TOKEN=ghp_your_token \
+  -e OPENAI_API_KEY=sk-your_key \
   -v "$(pwd)":/data \
   ghcr.io/kerem-ersoz/fit2json analyze /data/output.json --prompt "How was my pacing?"
+
+# With Ollama (running on host)
+docker run --rm \
+  --network host \
+  -v "$(pwd)":/data \
+  ghcr.io/kerem-ersoz/fit2json analyze /data/output.json --provider ollama --prompt "Analyze this run"
 ```
 
 ### Pipeline: convert + analyze
 
 ```bash
 docker run --rm -v "$(pwd)":/data ghcr.io/kerem-ersoz/fit2json convert /data/my_run.fit \
-  | docker run --rm -i -e GITHUB_TOKEN=ghp_your_token ghcr.io/kerem-ersoz/fit2json analyze --prompt "Race report"
+  | docker run --rm -i -e OPENAI_API_KEY=sk-your_key ghcr.io/kerem-ersoz/fit2json analyze --prompt "Race report"
 ```
 
 ### Using a .env file
@@ -245,20 +255,28 @@ fit2json fetch strava --days 90 -o quarter.json
 
 ### `fit2json analyze`
 
-Send activity JSON to an LLM via GitHub Models API for AI-powered analysis.
+Send activity JSON to an LLM for AI-powered analysis. Supports multiple providers.
+
+**Provider auto-detection:** If `OPENAI_API_KEY` is set → uses OpenAI. If `GITHUB_TOKEN` is set → uses GitHub Models. Otherwise → tries Ollama on localhost.
 
 ```bash
-# Analyze a JSON file
+# Analyze with OpenAI (auto-detected from OPENAI_API_KEY)
 fit2json analyze output.json --prompt "How is my running fitness trending?"
+
+# Explicitly choose OpenAI with a specific model
+fit2json analyze output.json --provider openai --model gpt-4.1 --prompt "Race report"
+
+# Use Ollama (local, free)
+fit2json analyze output.json --provider ollama --model llama3.1 --prompt "Analyze my HR zones"
+
+# Use any OpenAI-compatible endpoint
+fit2json analyze output.json --base-url http://my-server:8080/v1 --prompt "Summarize"
+
+# Deep analysis: each activity analyzed individually, then synthesized
+fit2json analyze output.json --deep --prompt "Comprehensive fitness overview"
 
 # Pipe from convert
 fit2json convert activity.fit | fit2json analyze --prompt "Give me a race report"
-
-# Use a specific model
-fit2json analyze output.json --prompt "Analyze my HR zones" --model gemini-3-pro-preview
-
-# Disable streaming
-fit2json analyze output.json --prompt "Summarize this week" --no-stream
 ```
 
 **Options:**
@@ -266,8 +284,13 @@ fit2json analyze output.json --prompt "Summarize this week" --no-stream
 | Option | Description |
 |--------|-------------|
 | `-p, --prompt TEXT` | **(Required)** Your analysis question or prompt. |
-| `--model TEXT` | Model to use (default: `gemini-3-pro-preview`). |
-| `--token TEXT` | GitHub personal access token (or set `GITHUB_TOKEN`). |
+| `--model TEXT` | Model name (e.g. `gpt-4.1`, `llama3.1`). Provider-specific defaults. |
+| `--provider` | `openai`, `ollama`, or `github`. Auto-detected if omitted. |
+| `--base-url TEXT` | Custom OpenAI-compatible API base URL. |
+| `--api-key TEXT` | API key (or set `OPENAI_API_KEY` / `GITHUB_TOKEN`). |
+| `--deep` | Multi-pass: analyze each activity individually, then synthesize. |
+| `--fast-model TEXT` | Model for per-activity pass in `--deep` mode (default: auto). |
+| `--max-chars INT` | Max input chars for context window (default: 100K). |
 | `--no-stream` | Disable streaming output. |
 
 ---
@@ -394,8 +417,10 @@ The output JSON is designed to be compact yet informative for LLM analysis:
 Create a `.env` file in your project directory (see `.env.example`):
 
 ```bash
-# Required for 'analyze' command
-GITHUB_TOKEN=ghp_your_github_token_here
+# For 'analyze' command — set ONE of these:
+OPENAI_API_KEY=sk-your_openai_key          # OpenAI (recommended)
+# GITHUB_TOKEN=ghp_your_github_token       # GitHub Models (rate-limited)
+# Or use --provider ollama for local models (no key needed)
 
 # Required for 'fetch garmin' command
 GARMIN_EMAIL=your@email.com
@@ -413,26 +438,36 @@ The tool automatically loads `.env` files from the current directory.
 
 ## API Setup Guides
 
-### GitHub Models API (for `analyze` command)
+### OpenAI API (recommended for `analyze` command)
 
-The `analyze` command uses the [GitHub Models API](https://github.com/marketplace/models), which is available to GitHub Copilot subscribers at no extra cost.
-
-1. **Create a Personal Access Token:**
-   - Go to [GitHub Settings → Tokens](https://github.com/settings/tokens)
-   - Click "Generate new token (classic)"
-   - No special scopes needed for GitHub Models
-   - Copy the token
-
-2. **Set the token:**
+1. **Get an API key** at [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+2. **Set the key:**
    ```bash
-   export GITHUB_TOKEN=ghp_your_token_here
-   # Or add to your .env file
+   export OPENAI_API_KEY=sk-your_key_here
    ```
-
 3. **Test it:**
    ```bash
    fit2json analyze output.json --prompt "Summarize this activity"
    ```
+
+### Ollama (free, local — for `analyze` command)
+
+1. **Install Ollama** from [ollama.com](https://ollama.com)
+2. **Pull a model:**
+   ```bash
+   ollama pull llama3.1
+   ```
+3. **Use it:**
+   ```bash
+   fit2json analyze output.json --provider ollama --prompt "Analyze this run"
+   ```
+
+### GitHub Models API (alternative for `analyze` command)
+
+> ⚠️ Heavily rate-limited on free tier (~150 requests/window). Better for single-file analysis.
+
+1. Create a [Personal Access Token](https://github.com/settings/tokens) (no special scopes needed)
+2. Set it: `export GITHUB_TOKEN=ghp_your_token_here`
 
 ### Garmin Connect (for `fetch garmin` command)
 
@@ -534,11 +569,15 @@ Some `.fit` files may be corrupted or use non-standard extensions. The tool will
 - Refresh tokens expire if unused for 6+ months — re-authorize if needed.
 
 ### Large activities produce huge JSON
-The 1-minute sampling keeps output compact. A typical 1-hour activity produces ~5KB of JSON. If you need to analyze many activities at once and hit context limits, the `analyze` command automatically truncates at 100K characters.
+The 1-minute sampling keeps output compact. A typical 1-hour activity produces ~5KB of JSON. For many activities, the `analyze` command automatically compacts data to fit the context window (default 100K chars). Use `--deep` for full per-activity analysis.
 
-### GitHub Models API errors
-- Verify your token: `curl -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/user`
-- Make sure you have an active GitHub Copilot subscription.
+### OpenAI API errors
+- Verify your key: `curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models`
+- Check your billing at [platform.openai.com/usage](https://platform.openai.com/usage)
+
+### Ollama connection refused
+- Make sure Ollama is running: `ollama serve`
+- Check it's on the default port: `curl http://localhost:11434/v1/models`
 
 ---
 
