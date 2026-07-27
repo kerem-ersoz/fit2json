@@ -122,8 +122,9 @@ def test_analyze_streams_and_saves(client, monkeypatch):
 
     monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
 
-    def fake_stream(prompt, workout_paths, memory_dir=None, model=None):
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False):
         assert workout_paths and workout_paths[0].exists()
+        assert silent is True  # web path uses --silent to strip the copilot tool-trace
         yield "## Analysis\n"
         yield "Looking strong!"
 
@@ -159,7 +160,7 @@ def test_analyze_appends_chart_guidance(client, monkeypatch):
     monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
     captured: dict = {}
 
-    def fake_stream(prompt, workout_paths, memory_dir=None, model=None):
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False):
         captured["prompt"] = prompt
         yield "ok"
 
@@ -181,7 +182,7 @@ def test_analyze_charts_can_be_disabled(client, monkeypatch):
     monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
     captured: dict = {}
 
-    def fake_stream(prompt, workout_paths, memory_dir=None, model=None):
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False):
         captured["prompt"] = prompt
         yield "ok"
 

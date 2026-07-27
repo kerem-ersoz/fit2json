@@ -55,6 +55,7 @@ def analyze(req: AnalyzeRequest):
                 workout_paths=[path],
                 memory_dir=(store.root if store else None),
                 model=req.model,
+                silent=True,
             )
         if resolved in analyzer.LOCAL_BACKENDS:
             url, key = analyzer.LOCAL_BACKENDS[resolved]

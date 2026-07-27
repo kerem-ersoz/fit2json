@@ -103,6 +103,7 @@ def run_copilot(
     memory_dir: Optional[Path] = None,
     model: Optional[str] = None,
     stream: bool = True,
+    silent: bool = False,
 ) -> str:
     """Run analysis via the GitHub Copilot CLI subprocess.
 
@@ -110,7 +111,7 @@ def run_copilot(
     (optionally) echoes them to stdout, preserving the original CLI behavior.
     """
     chunks: List[str] = []
-    for chunk in stream_copilot(prompt, workout_paths, memory_dir, model):
+    for chunk in stream_copilot(prompt, workout_paths, memory_dir, model, silent=silent):
         chunks.append(chunk)
         if stream:
             sys.stdout.write(chunk)
@@ -123,11 +124,16 @@ def stream_copilot(
     workout_paths: List[Path],
     memory_dir: Optional[Path] = None,
     model: Optional[str] = None,
+    silent: bool = False,
 ) -> Iterator[str]:
     """Yield analysis text chunks from the GitHub Copilot CLI subprocess.
 
     Streams the CLI's stdout line by line so callers (CLI or web) can consume it
     incrementally. Raises ``click.ClickException`` if the CLI is missing or fails.
+
+    When ``silent`` is True, passes ``--silent`` so the CLI emits *only* the final
+    agent response — no tool-call trace or stats footer. Used by the web UI so saved
+    analyses are clean prose + charts.
     """
     if not copilot_available():
         raise click.ClickException(
@@ -145,6 +151,8 @@ def stream_copilot(
         "--log-level", "none",
         "--model", model or "auto",
     ]
+    if silent:
+        cmd.append("--silent")
     allow_dirs = {str(p.parent.resolve()) for p in workout_paths}
     if memory_dir is not None:
         allow_dirs.add(str(Path(memory_dir).resolve()))
