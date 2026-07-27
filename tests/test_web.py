@@ -122,7 +122,7 @@ def test_analyze_streams_and_saves(client, monkeypatch):
 
     monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
 
-    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False):
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False, reasoning_effort=None):
         assert workout_paths and workout_paths[0].exists()
         assert silent is True  # web path uses --silent to strip the copilot tool-trace
         yield "## Analysis\n"
@@ -160,7 +160,7 @@ def test_analyze_appends_chart_guidance(client, monkeypatch):
     monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
     captured: dict = {}
 
-    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False):
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False, reasoning_effort=None):
         captured["prompt"] = prompt
         yield "ok"
 
@@ -182,7 +182,7 @@ def test_analyze_charts_can_be_disabled(client, monkeypatch):
     monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
     captured: dict = {}
 
-    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False):
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False, reasoning_effort=None):
         captured["prompt"] = prompt
         yield "ok"
 
@@ -194,6 +194,36 @@ def test_analyze_charts_can_be_disabled(client, monkeypatch):
     )
     assert r.status_code == 200
     assert "fitsift-chart" not in captured["prompt"]
+
+
+def test_analyze_forwards_model_and_reasoning_effort(client, monkeypatch):
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+    captured: dict = {}
+
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False, reasoning_effort=None):
+        captured["model"] = model
+        captured["reasoning_effort"] = reasoning_effort
+        yield "ok"
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+
+    aid = client.get("/api/activities").json()[0]["id"]
+    r = client.post(
+        "/api/analyze",
+        json={
+            "activity_id": aid,
+            "prompt": "Coach me",
+            "model": "claude-opus-4.8",
+            "reasoning_effort": "max",
+        },
+    )
+    assert r.status_code == 200
+    # The web coach must forward the athlete's model + reasoning effort to the CLI,
+    # otherwise a powerful model silently runs at default depth (the "too brief" bug).
+    assert captured["model"] == "claude-opus-4.8"
+    assert captured["reasoning_effort"] == "max"
 
 
 @pytest.fixture()

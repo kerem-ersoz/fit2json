@@ -171,6 +171,7 @@ export interface AnalyzeBody {
   prompt: string
   backend?: string | null
   model?: string | null
+  reasoning_effort?: string | null
   no_memory?: boolean
 }
 

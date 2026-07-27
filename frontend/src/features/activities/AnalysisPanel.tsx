@@ -23,6 +23,15 @@ function backendOptions(copilot: boolean) {
   return opts
 }
 
+// Copilot CLI reasoning effort. '' = leave the model/CLI default untouched.
+const EFFORT_OPTIONS = [
+  { v: '', label: 'Reasoning: default' },
+  { v: 'low', label: 'Reasoning: low' },
+  { v: 'medium', label: 'Reasoning: medium' },
+  { v: 'high', label: 'Reasoning: high' },
+  { v: 'max', label: 'Reasoning: max' },
+]
+
 export function AnalysisPanel({ activityId }: { activityId: string }) {
   const queryClient = useQueryClient()
   const { data: config } = useQuery({ queryKey: ['config'], queryFn: api.config })
@@ -33,6 +42,7 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
 
   const [prompt, setPrompt] = useState('')
   const [backend, setBackend] = useState<string>('')
+  const [effort, setEffort] = useState<string>('')
   const [running, setRunning] = useState(false)
   const [output, setOutput] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -52,7 +62,12 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
     const controller = new AbortController()
     abortRef.current = controller
     await streamAnalyze(
-      { activity_id: activityId, prompt, backend: backend || undefined },
+      {
+        activity_id: activityId,
+        prompt,
+        backend: backend || undefined,
+        reasoning_effort: backend === 'copilot' && effort ? effort : undefined,
+      },
       {
         onDelta: (text) => setOutput((o) => o + text),
         onDone: (info) => {
@@ -87,19 +102,37 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
             <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900">
               <Sparkles className="h-5 w-5 text-brand-600" /> Analyze this workout
             </h2>
-            <select
-              value={backend}
-              onChange={(e) => setBackend(e.target.value)}
-              disabled={running}
-              className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-              aria-label="Analysis backend"
-            >
-              {options.map((o) => (
-                <option key={o.v} value={o.v}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center gap-2">
+              {backend === 'copilot' && (
+                <select
+                  value={effort}
+                  onChange={(e) => setEffort(e.target.value)}
+                  disabled={running}
+                  className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  aria-label="Reasoning effort"
+                  title="Copilot reasoning effort. Higher = deeper, more thorough analysis."
+                >
+                  {EFFORT_OPTIONS.map((o) => (
+                    <option key={o.v} value={o.v}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <select
+                value={backend}
+                onChange={(e) => setBackend(e.target.value)}
+                disabled={running}
+                className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                aria-label="Analysis backend"
+              >
+                {options.map((o) => (
+                  <option key={o.v} value={o.v}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <textarea
