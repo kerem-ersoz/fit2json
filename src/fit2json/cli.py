@@ -87,6 +87,52 @@ def _decode_fit_paths(fit_files: List[Path]) -> List[DecodedActivity]:
     return activities
 
 
+def _watch_options(func):
+    """Shared --watch/--interval/--max-runs options for the fetch subcommands."""
+    func = click.option(
+        "--max-runs", type=int, default=None,
+        help="In --watch mode, stop after this many cycles (default: run until stopped).",
+    )(func)
+    func = click.option(
+        "--interval", type=float, default=900, show_default=True,
+        help="Seconds between polls in --watch mode.",
+    )(func)
+    func = click.option(
+        "--watch", is_flag=True,
+        help="Poll continuously with a built-in cross-platform scheduler "
+             "(no cron/launchd needed). Stops cleanly on Ctrl-C / SIGTERM.",
+    )(func)
+    return func
+
+
+def _watch_or_once(run_once, *, watch: bool, interval: float,
+                   max_runs: Optional[int], label: str) -> None:
+    """Run ``run_once`` once, or repeatedly on an interval when ``watch`` is set.
+
+    Watch mode is built to be driven headlessly by a parent process (e.g. a frontend):
+    it streams flushed status to stderr and delegates graceful, signal-based shutdown
+    to :func:`fit2json.watch.run_watch`, so it never blocks the caller on input.
+    """
+    if not watch:
+        run_once()
+        return
+
+    if interval is None or interval <= 0:
+        raise click.ClickException("--interval must be a positive number of seconds.")
+
+    from fit2json.watch import run_watch
+
+    def _emit(message: str) -> None:
+        click.echo(f"[watch] {message}", err=True)
+        try:
+            sys.stderr.flush()
+        except Exception:  # noqa: BLE001 - flushing is best-effort
+            pass
+
+    _emit(f"polling {label} every {interval:g}s — Ctrl-C / SIGTERM to stop")
+    run_watch(run_once, interval, max_runs=max_runs, emit=_emit)
+
+
 # ── convert ──────────────────────────────────────────────────────────────────
 
 
@@ -139,18 +185,30 @@ def fetch():
 @click.option("--token-dir", default=None,
               help="Garmin session token cache dir (or set GARMINTOKENS; default ~/.garminconnect). "
                    "Reuses a saved session so frequent polling avoids CAPTCHA / rate limiting.")
-def fetch_garmin(days, output_path, gzip_out, email, password, raw_dir, token_dir):
-    """Fetch Garmin Connect activities and store them as lossless JSON."""
+@_watch_options
+def fetch_garmin(days, output_path, gzip_out, email, password, raw_dir, token_dir,
+                 watch, interval, max_runs):
+    """Fetch Garmin Connect activities and store them as lossless JSON.
+
+    With --watch this polls continuously using a built-in, cross-platform scheduler
+    (no cron/launchd needed). Watch mode is non-interactive and never prompts, so if
+    your account uses MFA, seed the session once with a plain interactive
+    `fit2json fetch garmin` (without --watch) before enabling it.
+    """
     from fit2json.sources.garmin import fetch_garmin_activities
 
-    fit_files = fetch_garmin_activities(
-        days=days, output_dir=raw_dir, email=email, password=password, token_dir=token_dir
-    )
-    if not fit_files:
-        return
-    activities = _decode_fit_paths(fit_files)
-    if activities:
-        _emit_activities(activities, output_path, gzip_out, 2, "garmin")
+    def _run_once():
+        fit_files = fetch_garmin_activities(
+            days, raw_dir, email, password, token_dir,
+            (False if watch else None),
+        )
+        if not fit_files:
+            return
+        activities = _decode_fit_paths(fit_files)
+        if activities:
+            _emit_activities(activities, output_path, gzip_out, 2, "garmin")
+
+    _watch_or_once(_run_once, watch=watch, interval=interval, max_runs=max_runs, label="Garmin")
 
 
 @fetch.command(name="strava")
@@ -162,31 +220,39 @@ def fetch_garmin(days, output_path, gzip_out, email, password, raw_dir, token_di
 @click.option("--client-secret", default=None, help="Strava API client secret.")
 @click.option("--refresh-token", default=None, help="Strava OAuth2 refresh token.")
 @click.option("--raw-dir", default=None, help="Directory to keep raw stream files.")
-def fetch_strava(days, output_path, gzip_out, client_id, client_secret, refresh_token, raw_dir):
+@_watch_options
+def fetch_strava(days, output_path, gzip_out, client_id, client_secret, refresh_token, raw_dir,
+                 watch, interval, max_runs):
     """Fetch Strava activities (best-effort, lower fidelity than .fit) as JSON.
 
     Note: Strava's API returns processed time-series streams, not raw .fit files, so this
     path cannot be truly lossless. For full fidelity, use Strava's bulk .fit export with
     `fit2json convert`.
+
+    With --watch this polls continuously using the same built-in cross-platform scheduler
+    as `fetch garmin`.
     """
     from fit2json.sources.strava import fetch_strava_activities, parse_strava_json
 
-    activity_files = fetch_strava_activities(
-        days=days, output_dir=raw_dir, client_id=client_id,
-        client_secret=client_secret, refresh_token=refresh_token,
-    )
-    if not activity_files:
-        return
+    def _run_once():
+        activity_files = fetch_strava_activities(
+            days=days, output_dir=raw_dir, client_id=client_id,
+            client_secret=client_secret, refresh_token=refresh_token,
+        )
+        if not activity_files:
+            return
 
-    activities: List[DecodedActivity] = []
-    for fp in activity_files:
-        try:
-            activities.append(parse_strava_json(fp))
-        except Exception as e:  # pragma: no cover - defensive
-            click.echo(f"  Warning: Failed to parse {fp.name}: {e}", err=True)
+        activities: List[DecodedActivity] = []
+        for fp in activity_files:
+            try:
+                activities.append(parse_strava_json(fp))
+            except Exception as e:  # pragma: no cover - defensive
+                click.echo(f"  Warning: Failed to parse {fp.name}: {e}", err=True)
 
-    if activities:
-        _emit_activities(activities, output_path, gzip_out, 2, "strava")
+        if activities:
+            _emit_activities(activities, output_path, gzip_out, 2, "strava")
+
+    _watch_or_once(_run_once, watch=watch, interval=interval, max_runs=max_runs, label="Strava")
 
 
 # ── analyze ──────────────────────────────────────────────────────────────────

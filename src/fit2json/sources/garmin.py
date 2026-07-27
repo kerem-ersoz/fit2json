@@ -135,8 +135,8 @@ def _init_garmin_client(
             ""
             if interactive
             else " If this account uses MFA, seed the token store once with an "
-            "interactive login (scripts/seed-garmin-login.sh) before enabling the "
-            "background job."
+            "interactive `fit2json fetch garmin` (without --watch) before running "
+            "in --watch mode."
         )
         raise click.ClickException(f"Garmin authentication failed: {e}.{hint}") from e
     except Exception as e:  # noqa: BLE001 - unexpected login failure
