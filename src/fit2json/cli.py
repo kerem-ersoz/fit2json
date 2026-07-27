@@ -77,26 +77,47 @@ def fetch():
 @click.option("--email", default=None, help="Garmin Connect email.")
 @click.option("--password", default=None, help="Garmin Connect password.")
 @click.option("--raw-dir", default=None, help="Directory to save raw .fit files.")
-def fetch_garmin(days: int, output_path: Optional[str], email: Optional[str], password: Optional[str], raw_dir: Optional[str]):
+@click.option("--json-dir", default=None, help="Directory to write one JSON file per new activity (named to match the raw .fit).")
+@click.option("--token-dir", default=None, help="Directory for the Garmin session token cache (or set GARMINTOKENS; default ~/.garminconnect).")
+def fetch_garmin(days: int, output_path: Optional[str], email: Optional[str], password: Optional[str], raw_dir: Optional[str], json_dir: Optional[str], token_dir: Optional[str]):
     """Fetch and convert activities from Garmin Connect."""
     from fit2json.sources.garmin import fetch_garmin_activities
     from fit2json.parser import parse_fit_file
     from fit2json.output import build_output, write_json
 
-    fit_files = fetch_garmin_activities(days=days, output_dir=raw_dir, email=email, password=password)
+    fit_files = fetch_garmin_activities(days=days, output_dir=raw_dir, email=email, password=password, token_dir=token_dir)
 
     if not fit_files:
         return
 
-    activities = []
+    parsed = []  # (Path, Activity)
     for fp in fit_files:
         try:
             activity = parse_fit_file(fp)
-            activities.append(activity)
+            parsed.append((fp, activity))
         except Exception as e:
             click.echo(f"  Warning: Failed to parse {fp.name}: {e}", err=True)
 
-    if activities:
+    if not parsed:
+        return
+
+    activities = [activity for _, activity in parsed]
+
+    if json_dir:
+        out_dir = Path(json_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        written = 0
+        for fp, activity in parsed:
+            target = out_dir / f"{fp.stem}.json"
+            if target.exists():
+                continue
+            write_json(build_output([activity]), str(target))
+            written += 1
+        click.echo(f"Wrote {written} activity JSON file(s) to {out_dir}", err=True)
+        if output_path:
+            write_json(build_output(activities), output_path)
+            click.echo(f"Written {len(activities)} activity/activities to {output_path}", err=True)
+    else:
         doc = build_output(activities)
         write_json(doc, output_path)
         if output_path:
