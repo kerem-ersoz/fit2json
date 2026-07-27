@@ -3,16 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, Download, ExternalLink } from 'lucide-react'
 import { api } from '../lib/api'
 import { sportMeta } from '../lib/sport'
-import {
-  formatCalories,
-  formatDateTime,
-  formatDistance,
-  formatDuration,
-  formatElevation,
-  formatHr,
-  formatPaceOrSpeed,
-  formatPower,
-} from '../lib/format'
+import { formatCalories, formatDateTime, formatDuration, formatHr } from '../lib/format'
+import { useUnits } from '../lib/units'
 import { ErrorState, LoadingState } from '../components/ui/Feedback'
 import { Card } from '../components/ui/Card'
 import { ActivityMap } from '../features/activities/ActivityMap'
@@ -43,17 +35,18 @@ export function ActivityDetailPage() {
 
   const d = detailQ.data
   const { label, Icon } = sportMeta(d.sport)
+  const { fmt } = useUnits()
   const m = d.metrics
 
   const stats: { label: string; value: string }[] = []
-  if (m.distance_m != null) stats.push({ label: 'Distance', value: formatDistance(m.distance_m) })
+  if (m.distance_m != null) stats.push({ label: 'Distance', value: fmt.distance(m.distance_m) })
   if (m.duration_s != null) stats.push({ label: 'Time', value: formatDuration(m.duration_s) })
   if (m.avg_speed_mps != null)
-    stats.push({ label: 'Avg Pace', value: formatPaceOrSpeed(m.avg_speed_mps, d.sport) })
+    stats.push({ label: 'Avg Pace', value: fmt.paceOrSpeed(m.avg_speed_mps, d.sport) })
   if (m.avg_hr != null) stats.push({ label: 'Avg HR', value: formatHr(m.avg_hr) })
   if (m.max_hr != null) stats.push({ label: 'Max HR', value: formatHr(m.max_hr) })
-  if (m.avg_power_w != null) stats.push({ label: 'Avg Power', value: formatPower(m.avg_power_w) })
-  if (m.ascent_m != null) stats.push({ label: 'Elev Gain', value: formatElevation(m.ascent_m) })
+  if (m.avg_power_w != null) stats.push({ label: 'Avg Power', value: fmt.power(m.avg_power_w) })
+  if (m.ascent_m != null) stats.push({ label: 'Elev Gain', value: fmt.elevation(m.ascent_m) })
   if (m.total_calories != null)
     stats.push({ label: 'Calories', value: formatCalories(m.total_calories) })
 

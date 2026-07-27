@@ -2,13 +2,8 @@ import { Link } from 'react-router-dom'
 import { MapPin } from 'lucide-react'
 import type { ActivitySummary } from '../../lib/api'
 import { sportMeta } from '../../lib/sport'
-import {
-  formatDate,
-  formatDistance,
-  formatDuration,
-  formatHr,
-  formatPaceOrSpeed,
-} from '../../lib/format'
+import { formatDate, formatDuration, formatHr } from '../../lib/format'
+import { useUnits } from '../../lib/units'
 import { Card } from '../../components/ui/Card'
 import { Badge } from '../../components/ui/Badge'
 
@@ -23,6 +18,7 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 export function ActivityCard({ activity }: { activity: ActivitySummary }) {
   const { label, Icon } = sportMeta(activity.sport)
+  const { fmt } = useUnits()
   const m = activity.metrics
 
   return (
@@ -47,11 +43,11 @@ export function ActivityCard({ activity }: { activity: ActivitySummary }) {
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-4">
-          <Metric label="Distance" value={formatDistance(m.distance_m)} />
+          <Metric label="Distance" value={fmt.distance(m.distance_m)} />
           <Metric label="Time" value={formatDuration(m.duration_s)} />
           <Metric
             label="Pace"
-            value={formatPaceOrSpeed(m.avg_speed_mps, activity.sport)}
+            value={fmt.paceOrSpeed(m.avg_speed_mps, activity.sport)}
           />
           <Metric label="Avg HR" value={formatHr(m.avg_hr)} />
         </div>

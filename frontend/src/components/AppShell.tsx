@@ -4,6 +4,7 @@ import { clsx } from 'clsx'
 import { Brain, History, ListChecks, Upload, type LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { api } from '../lib/api'
+import { useUnits } from '../lib/units'
 
 interface NavItem {
   to: string
@@ -38,6 +39,27 @@ function BrandMark({ compact = false }: { compact?: boolean }) {
   )
 }
 
+function UnitsToggle() {
+  const { system, setSystem } = useUnits()
+  return (
+    <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs font-medium">
+      {(['metric', 'imperial'] as const).map((s) => (
+        <button
+          key={s}
+          type="button"
+          onClick={() => setSystem(s)}
+          className={clsx(
+            'rounded-md px-2.5 py-1 capitalize transition-colors',
+            system === s ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-500',
+          )}
+        >
+          {s}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-full lg:flex">
@@ -66,12 +88,16 @@ export function AppShell({ children }: { children: ReactNode }) {
             </NavLink>
           ))}
         </nav>
-        <div className="px-5 py-4 text-xs text-slate-400">Local · single-user</div>
+        <div className="space-y-3 px-5 py-4">
+          <UnitsToggle />
+          <div className="text-xs text-slate-400">Local · single-user</div>
+        </div>
       </aside>
 
       {/* Mobile top bar */}
-      <header className="sticky top-0 z-20 flex items-center border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur lg:hidden">
+      <header className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur lg:hidden">
         <BrandMark compact />
+        <UnitsToggle />
       </header>
 
       {/* Main content */}

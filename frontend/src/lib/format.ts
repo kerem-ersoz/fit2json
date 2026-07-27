@@ -1,7 +1,13 @@
 // Human-friendly formatting for workout metrics.
 
-export function formatDistance(m?: number | null): string {
+export type UnitSystem = 'metric' | 'imperial'
+
+export function formatDistance(m?: number | null, system: UnitSystem = 'metric'): string {
   if (m == null) return '—'
+  if (system === 'imperial') {
+    const mi = m / 1609.344
+    return mi >= 0.1 ? `${mi.toFixed(2)} mi` : `${Math.round(m * 3.28084)} ft`
+  }
   return m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`
 }
 
@@ -22,15 +28,26 @@ export function isPaceSport(sport?: string | null): boolean {
   return sport ? PACE_SPORTS.has(sport) : false
 }
 
-export function formatPaceOrSpeed(mps?: number | null, sport?: string | null): string {
+export function formatPaceOrSpeed(
+  mps?: number | null,
+  sport?: string | null,
+  system: UnitSystem = 'metric',
+): string {
   if (mps == null || mps <= 0) return '—'
   if (isPaceSport(sport)) {
-    const secPerKm = 1000 / mps
-    const m = Math.floor(secPerKm / 60)
-    const s = Math.round(secPerKm % 60)
-    return `${m}:${String(s).padStart(2, '0')} /km`
+    const perUnit = system === 'imperial' ? 1609.344 : 1000
+    const sec = perUnit / mps
+    let m = Math.floor(sec / 60)
+    let s = Math.round(sec % 60)
+    if (s === 60) {
+      m += 1
+      s = 0
+    }
+    return `${m}:${String(s).padStart(2, '0')} ${system === 'imperial' ? '/mi' : '/km'}`
   }
-  return `${(mps * 3.6).toFixed(1)} km/h`
+  return system === 'imperial'
+    ? `${(mps * 2.236936).toFixed(1)} mph`
+    : `${(mps * 3.6).toFixed(1)} km/h`
 }
 
 export function formatHr(bpm?: number | null): string {
@@ -41,8 +58,9 @@ export function formatPower(w?: number | null): string {
   return w != null ? `${Math.round(w)} W` : '—'
 }
 
-export function formatElevation(m?: number | null): string {
-  return m != null ? `${Math.round(m)} m` : '—'
+export function formatElevation(m?: number | null, system: UnitSystem = 'metric'): string {
+  if (m == null) return '—'
+  return system === 'imperial' ? `${Math.round(m * 3.28084)} ft` : `${Math.round(m)} m`
 }
 
 export function formatCalories(kcal?: number | null): string {
