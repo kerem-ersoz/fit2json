@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from fit2json import __version__, analyzer
+from fit2json.web import services
 from fit2json.web.config import get_settings
 from fit2json.web.schemas import Backends, Branding, Config, Health
 
@@ -28,4 +29,11 @@ def config() -> Config:
         library_dir=str(settings.library_dir),
         memory_dir=str(settings.memory_dir),
         base_path=settings.base_path,
+        workout_prompt_default=services.CANONICAL_WORKOUT_PROMPT,
     )
+
+
+@router.get("/models")
+def models(backend: str = Query("copilot", description="copilot | ollama | lmstudio")):
+    """Selectable models + reasoning-effort levels for a backend (queried live where possible)."""
+    return services.available_models(backend)

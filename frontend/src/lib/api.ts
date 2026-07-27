@@ -25,6 +25,15 @@ export interface AppConfig {
   library_dir: string
   memory_dir: string
   base_path: string
+  workout_prompt_default: string
+}
+
+export interface ModelInfo {
+  backend: string
+  models: string[]
+  efforts: string[]
+  allow_custom: boolean
+  reachable: boolean
 }
 
 export interface Metrics {
@@ -116,6 +125,7 @@ export interface FetchResult {
 
 export const api = {
   config: () => getJSON<AppConfig>('/config'),
+  models: (backend: string) => getJSON<ModelInfo>(`/models?backend=${encodeURIComponent(backend)}`),
   activities: () => getJSON<ActivitySummary[]>('/activities'),
   activity: (id: string) => getJSON<ActivityDetail>(`/activities/${encodeURIComponent(id)}`),
   streams: (id: string, maxPoints = 2000) =>
@@ -167,16 +177,28 @@ async function errorText(res: Response): Promise<string> {
 }
 
 export interface AnalyzeBody {
-  activity_id: string
+  activity_id?: string
+  activity_ids?: string[]
   prompt: string
+  workout_prompt?: string | null
   backend?: string | null
   model?: string | null
   reasoning_effort?: string | null
   no_memory?: boolean
 }
 
+export interface MapStep {
+  index: number
+  total: number
+  label: string
+  reused?: boolean
+  state: 'start' | 'done'
+}
+
 export interface StreamHandlers {
   onStart?: (backend: string) => void
+  onStep?: (step: MapStep) => void
+  onReduce?: (info: { count: number }) => void
   onDelta: (text: string) => void
   onDone?: (info: { chars: number; saved: string | null; backend: string }) => void
   onError?: (message: string) => void
@@ -249,6 +271,8 @@ export async function streamAnalyze(
       const parsed = parseFrame(frame)
       if (!parsed) continue
       if (parsed.event === 'start') handlers.onStart?.(parsed.data.backend)
+      else if (parsed.event === 'step') handlers.onStep?.(parsed.data)
+      else if (parsed.event === 'reduce') handlers.onReduce?.(parsed.data)
       else if (parsed.event === 'delta') handlers.onDelta(parsed.data.text ?? '')
       else if (parsed.event === 'done') handlers.onDone?.(parsed.data)
       else if (parsed.event === 'error') handlers.onError?.(parsed.data.message ?? 'Analysis failed')

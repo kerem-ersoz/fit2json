@@ -109,6 +109,7 @@ class MemoryStore:
         analysis: str,
         backend: str = "",
         model: str = "",
+        reasoning_effort: str = "",
     ) -> Path:
         """Save one analysis as a memory file and append to the index."""
         sport = activity.sport or "unknown"
@@ -127,6 +128,7 @@ class MemoryStore:
             "prompt": prompt,
             "backend": backend,
             "model": model,
+            "reasoning_effort": reasoning_effort,
             "created_at": created_at,
             "metrics": metrics,
         }
@@ -144,7 +146,7 @@ class MemoryStore:
     def _render_markdown(self, entry: Dict[str, Any], analysis: str) -> str:
         fm_keys = [
             "entry_id", "activity_id", "date", "sport", "source_file",
-            "backend", "model", "created_at",
+            "backend", "model", "reasoning_effort", "created_at",
         ]
         lines = ["---"]
         for key in fm_keys:
