@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fit2json"
-version = "0.1.0"
-description = "Convert Garmin/Strava .fit files to LLM-ready JSON and analyze with GitHub Models API"
+version = "0.2.0"
+description = "Pull workouts from Garmin/Strava, store them as lossless JSON, and analyze them with Copilot CLI or a local LLM"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
@@ -18,7 +18,6 @@ dependencies = [
     "openai>=1.0.0",
     "requests>=2.31.0",
     "garminconnect>=0.2.0",
-    "stravalib>=1.0.0",
     "python-dotenv>=1.0.0",
 ]
 

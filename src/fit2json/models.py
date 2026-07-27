@@ -1,103 +1,109 @@
-"""Data models for fit2json activity data."""
+"""Data models for the lossless fit2json schema.
+
+A decoded activity is a faithful dump of every FIT message and field. Messages are
+grouped by name (order preserved within each group); every field keeps its decoded
+value, and units are recorded once in a top-level legend for readability.
+"""
 
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-
-@dataclass
-class TimeSeriesSample:
-    """A single 1-minute time-series sample."""
-
-    elapsed_min: int
-    heart_rate_bpm: Optional[int] = None
-    cadence_spm: Optional[int] = None
-    speed_kmh: Optional[float] = None
-    power_w: Optional[int] = None
-
-
-@dataclass
-class Lap:
-    """Per-lap summary data."""
-
-    lap_number: int
-    distance_km: Optional[float] = None
-    duration_s: Optional[float] = None
-    avg_heart_rate_bpm: Optional[int] = None
-    max_heart_rate_bpm: Optional[int] = None
-    avg_pace_min_per_km: Optional[float] = None
-    avg_speed_kmh: Optional[float] = None
-    avg_cadence_spm: Optional[int] = None
-    avg_power_w: Optional[int] = None
+# Minimal fallback for the rare case a device stores `sport` as a raw integer
+# (fitdecode normally decodes it to a string like "running").
+SPORT_MAP = {
+    0: "generic", 1: "running", 2: "cycling", 5: "swimming", 6: "basketball",
+    7: "soccer", 9: "fitness_equipment", 10: "tennis", 11: "hiking", 13: "walking",
+    15: "multi_sport", 17: "rowing", 22: "rock_climbing",
+    23: "stand_up_paddleboarding", 29: "strength_training", 37: "yoga",
+    53: "elliptical", 62: "inline_skating",
+}
 
 
 @dataclass
-class HRZoneSeconds:
-    """Time spent in each heart rate zone (seconds)."""
+class DecodedActivity:
+    """A losslessly decoded .fit file.
 
-    z1: int = 0
-    z2: int = 0
-    z3: int = 0
-    z4: int = 0
-    z5: int = 0
-
-
-@dataclass
-class ActivitySummary:
-    """Aggregated summary of an activity."""
-
-    total_distance_km: Optional[float] = None
-    total_duration_s: Optional[float] = None
-    avg_pace_min_per_km: Optional[float] = None
-    max_pace_min_per_km: Optional[float] = None
-    avg_heart_rate_bpm: Optional[int] = None
-    max_heart_rate_bpm: Optional[int] = None
-    avg_cadence_spm: Optional[int] = None
-    max_cadence_spm: Optional[int] = None
-    avg_power_w: Optional[int] = None
-    max_power_w: Optional[int] = None
-    avg_speed_kmh: Optional[float] = None
-    max_speed_kmh: Optional[float] = None
-    total_calories: Optional[int] = None
-    total_ascent_m: Optional[float] = None
-    total_descent_m: Optional[float] = None
-    hr_zone_seconds: Optional[HRZoneSeconds] = None
-
-
-@dataclass
-class Activity:
-    """A fully parsed activity with summary, laps, and time series."""
+    Attributes:
+        source_file: Original file name.
+        messages: Mapping of FIT message name -> list of message dicts, each a
+            mapping of field name -> decoded value. Preserves every message and field.
+        field_units: Legend mapping field name -> unit string (e.g. "distance": "m").
+    """
 
     source_file: str
-    sport: str
-    start_time: Optional[str] = None  # ISO 8601
-    summary: Optional[ActivitySummary] = None
-    laps: List[Lap] = field(default_factory=list)
-    time_series_1min: List[TimeSeriesSample] = field(default_factory=list)
+    messages: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
+    field_units: Dict[str, str] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "DecodedActivity":
+        """Reconstruct from a serialized workout dict (sport/start_time re-derived)."""
+        return cls(
+            source_file=data.get("source_file", "unknown"),
+            messages=data.get("messages", {}) or {},
+            field_units=data.get("field_units", {}) or {},
+        )
+
+    @property
+    def _session(self) -> Dict[str, Any]:
+        sessions = self.messages.get("session") or []
+        return sessions[0] if sessions else {}
+
+    @property
+    def sport(self) -> Optional[str]:
+        """Best-effort sport name, derived from the session message."""
+        val = self._session.get("sport")
+        if isinstance(val, str):
+            return val.lower()
+        if isinstance(val, int):
+            return SPORT_MAP.get(val, f"sport_{val}")
+        return None
+
+    @property
+    def start_time(self) -> Optional[str]:
+        """ISO 8601 start time, from session, then activity, then first record."""
+        activity = (self.messages.get("activity") or [{}])[0]
+        record = (self.messages.get("record") or [{}])[0]
+        for candidate in (
+            self._session.get("start_time"),
+            activity.get("local_timestamp"),
+            activity.get("timestamp"),
+            record.get("timestamp"),
+        ):
+            if candidate:
+                return candidate
+        return None
+
+    @property
+    def message_counts(self) -> Dict[str, int]:
+        return {name: len(items) for name, items in self.messages.items()}
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a JSON-ready dict with readable metadata up front."""
+        return {
+            "source_file": self.source_file,
+            "sport": self.sport,
+            "start_time": self.start_time,
+            "message_counts": self.message_counts,
+            "field_units": self.field_units,
+            "messages": self.messages,
+        }
 
 
 @dataclass
-class OutputDocument:
-    """Top-level JSON output document."""
+class ActivityDocument:
+    """A collection of decoded activities plus tool metadata."""
 
-    activities: List[Activity] = field(default_factory=list)
+    activities: List[DecodedActivity] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to a JSON-serializable dict, dropping None values."""
-        return _strip_nones(asdict(self))
+        return {
+            "metadata": self.metadata,
+            "activities": [a.to_dict() for a in self.activities],
+        }
 
-    def to_json(self, indent: int = 2) -> str:
-        """Serialize to a JSON string."""
+    def to_json(self, indent: Optional[int] = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent, ensure_ascii=False)
-
-
-def _strip_nones(obj: Any) -> Any:
-    """Recursively remove keys with None values from dicts."""
-    if isinstance(obj, dict):
-        return {k: _strip_nones(v) for k, v in obj.items() if v is not None}
-    if isinstance(obj, list):
-        return [_strip_nones(item) for item in obj]
-    return obj

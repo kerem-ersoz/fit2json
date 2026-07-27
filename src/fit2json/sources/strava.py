@@ -11,7 +11,7 @@ from typing import List, Optional
 import click
 import requests
 
-from fit2json.models import Activity, ActivitySummary, TimeSeriesSample
+from fit2json.models import DecodedActivity
 
 
 def fetch_strava_activities(
@@ -146,99 +146,68 @@ def fetch_strava_activities(
     return downloaded
 
 
-def parse_strava_json(filepath: Path) -> Activity:
-    """Parse a Strava JSON activity file into a structure compatible with our models.
+def parse_strava_json(filepath: Path) -> DecodedActivity:
+    """Parse a Strava JSON activity file into a (best-effort) DecodedActivity.
 
-    This allows Strava stream data to be converted using the same pipeline as FIT files.
+    Strava exposes processed time-series *streams* rather than raw .fit data, so this
+    path is inherently lower-fidelity than the Garmin/local .fit path. We map the streams
+    to FIT-like ``session`` + ``record`` messages (at native stream resolution) so Strava
+    activities flow through the same output/memory pipeline.
     """
     import json
 
     data = json.loads(filepath.read_text())
     streams = data.get("streams", {})
 
-    # Build summary
-    distance_m = data.get("distance")
-    moving_time = data.get("moving_time")
-    avg_speed = (distance_m / moving_time) if (distance_m and moving_time) else None
+    session = {
+        "sport": data.get("sport", "unknown"),
+        "start_time": data.get("start_date"),
+        "total_distance": data.get("distance"),
+        "total_timer_time": data.get("moving_time"),
+        "total_elapsed_time": data.get("elapsed_time"),
+        "avg_heart_rate": data.get("average_heartrate"),
+        "max_heart_rate": data.get("max_heartrate"),
+        "avg_cadence": data.get("average_cadence"),
+        "avg_power": data.get("average_watts"),
+        "total_calories": data.get("calories"),
+        "total_ascent": data.get("total_elevation_gain"),
+        "kilojoules": data.get("kilojoules"),
+    }
+    session = {k: v for k, v in session.items() if v is not None}
 
-    summary = ActivitySummary(
-        total_distance_km=round(distance_m / 1000, 3) if distance_m else None,
-        total_duration_s=moving_time,
-        avg_pace_min_per_km=round(1000 / avg_speed / 60, 2) if avg_speed and avg_speed > 0 else None,
-        avg_heart_rate_bpm=_round_or_none(data.get("average_heartrate")),
-        max_heart_rate_bpm=_round_or_none(data.get("max_heartrate")),
-        avg_cadence_spm=_round_or_none(data.get("average_cadence"), multiply=2),
-        avg_power_w=_round_or_none(data.get("average_watts")),
-        avg_speed_kmh=round(avg_speed * 3.6, 2) if avg_speed else None,
-        total_calories=_round_or_none(data.get("calories")),
-        total_ascent_m=data.get("total_elevation_gain"),
-    )
-
-    # Build 1-minute time series from streams
-    time_series = []
+    stream_to_field = {
+        "time": "time_offset_s",
+        "heartrate": "heart_rate",
+        "cadence": "cadence",
+        "watts": "power",
+        "velocity_smooth": "speed",
+        "altitude": "altitude",
+        "distance": "distance",
+    }
     time_data = streams.get("time", [])
-    hr_data = streams.get("heartrate", [])
-    cadence_data = streams.get("cadence", [])
-    power_data = streams.get("watts", [])
-    speed_data = streams.get("velocity_smooth", [])
+    records = []
+    for i in range(len(time_data)):
+        record = {}
+        for stream_key, field_name in stream_to_field.items():
+            series = streams.get(stream_key)
+            if series and i < len(series) and series[i] is not None:
+                record[field_name] = series[i]
+        if record:
+            records.append(record)
 
-    if time_data:
-        # Group by minute
-        from collections import defaultdict
+    messages = {"session": [session]}
+    if records:
+        messages["record"] = records
 
-        buckets = defaultdict(list)
-        for i, t in enumerate(time_data):
-            minute = t // 60
-            buckets[minute].append(i)
+    field_units = {
+        "total_distance": "m", "total_timer_time": "s", "total_elapsed_time": "s",
+        "avg_heart_rate": "bpm", "max_heart_rate": "bpm", "avg_power": "W",
+        "total_ascent": "m", "time_offset_s": "s", "heart_rate": "bpm",
+        "power": "W", "speed": "m/s", "altitude": "m", "distance": "m",
+    }
 
-        max_min = max(buckets.keys()) if buckets else 0
-        for m in range(max_min + 1):
-            indices = buckets.get(m, [])
-            if not indices:
-                time_series.append(TimeSeriesSample(elapsed_min=m))
-                continue
-
-            sample = TimeSeriesSample(
-                elapsed_min=m,
-                heart_rate_bpm=_avg_from_indices(hr_data, indices),
-                cadence_spm=_avg_from_indices_doubled(cadence_data, indices),
-                speed_kmh=_avg_speed_from_indices(speed_data, indices),
-                power_w=_avg_from_indices(power_data, indices),
-            )
-            time_series.append(sample)
-
-    return Activity(
+    return DecodedActivity(
         source_file=filepath.name,
-        sport=data.get("sport", "unknown"),
-        start_time=data.get("start_date"),
-        summary=summary,
-        laps=[],
-        time_series_1min=time_series,
+        messages=messages,
+        field_units=field_units,
     )
-
-
-def _round_or_none(val, multiply=1):
-    if val is None:
-        return None
-    return round(val * multiply)
-
-
-def _avg_from_indices(data, indices):
-    if not data:
-        return None
-    vals = [data[i] for i in indices if i < len(data) and data[i] is not None]
-    return round(sum(vals) / len(vals)) if vals else None
-
-
-def _avg_from_indices_doubled(data, indices):
-    avg = _avg_from_indices(data, indices)
-    return avg * 2 if avg is not None else None
-
-
-def _avg_speed_from_indices(data, indices):
-    if not data:
-        return None
-    vals = [data[i] for i in indices if i < len(data) and data[i] is not None]
-    if not vals:
-        return None
-    return round(sum(vals) / len(vals) * 3.6, 2)
