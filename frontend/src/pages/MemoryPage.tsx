@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { History } from 'lucide-react'
 import { api, type AnalysisEntry } from '../lib/api'
 import { sportMeta } from '../lib/sport'
-import { formatDateTime } from '../lib/format'
+import { formatDate } from '../lib/format'
 import { EmptyState, ErrorState, LoadingState } from '../components/ui/Feedback'
 import { MarkdownView } from '../components/ui/Markdown'
 
@@ -14,7 +14,7 @@ function MemoryEntryItem({ entry }: { entry: AnalysisEntry }) {
     queryFn: () => api.memoryEntry(entry.entry_id),
     enabled: open,
   })
-  const { label } = sportMeta(entry.sport)
+  const { label, Icon } = sportMeta(entry.sport)
 
   return (
     <details
@@ -22,13 +22,17 @@ function MemoryEntryItem({ entry }: { entry: AnalysisEntry }) {
       onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
     >
       <summary className="flex cursor-pointer items-center gap-3 p-4 text-sm">
-        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
-          {label}
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-600">
+          <Icon className="h-4 w-4" />
         </span>
-        <span className="min-w-0 flex-1 truncate font-medium text-slate-800">
-          {entry.prompt || 'Analysis'}
-        </span>
-        <span className="shrink-0 text-xs text-slate-400">{formatDateTime(entry.created_at)}</span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-semibold text-slate-900">
+            {label} · {formatDate(entry.date ?? entry.created_at)}
+          </div>
+          {entry.prompt && (
+            <div className="truncate text-xs text-slate-400">{entry.prompt}</div>
+          )}
+        </div>
       </summary>
       <div className="border-t border-slate-100 p-4">
         {isLoading || !data ? (
