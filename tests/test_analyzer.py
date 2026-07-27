@@ -96,6 +96,40 @@ class TestRunCopilot:
         with pytest.raises(click.ClickException):
             analyzer.run_copilot("p", [], None)
 
+    def test_no_model_flag_when_unset(self, monkeypatch, tmp_path):
+        """Omitting --model lets the CLI use the user's configured default (e.g. Opus).
+
+        Forcing --model auto here overrides that default with the terse auto-router
+        pick — the root cause of the "too brief for opus 4.8" report.
+        """
+        monkeypatch.setattr(analyzer.shutil, "which", lambda name: "/usr/bin/copilot")
+        monkeypatch.setattr(analyzer.subprocess, "Popen", _FakePopen)
+        analyzer.run_copilot(prompt="p", workout_paths=[], memory_dir=None, model=None, stream=False)
+        assert "--model" not in _FakePopen.last_cmd
+
+    def test_model_and_effort_passed_through(self, monkeypatch):
+        monkeypatch.setattr(analyzer.shutil, "which", lambda name: "/usr/bin/copilot")
+        monkeypatch.setattr(analyzer.subprocess, "Popen", _FakePopen)
+        analyzer.run_copilot(
+            prompt="p", workout_paths=[], memory_dir=None,
+            model="claude-opus-4.8", stream=False, reasoning_effort="max",
+        )
+        cmd = _FakePopen.last_cmd
+        assert cmd[cmd.index("--model") + 1] == "claude-opus-4.8"
+        assert cmd[cmd.index("--reasoning-effort") + 1] == "max"
+
+    def test_auto_with_effort_raises(self, monkeypatch):
+        """'auto' + reasoning effort is rejected by the CLI, so fail fast with a clear error."""
+        monkeypatch.setattr(analyzer.shutil, "which", lambda name: "/usr/bin/copilot")
+        monkeypatch.setattr(analyzer.subprocess, "Popen", _FakePopen)
+        import click
+
+        with pytest.raises(click.ClickException):
+            analyzer.run_copilot(
+                prompt="p", workout_paths=[], memory_dir=None,
+                model="auto", stream=False, reasoning_effort="max",
+            )
+
 
 class _FakeMessage:
     def __init__(self, content):

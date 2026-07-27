@@ -56,6 +56,7 @@ def analyze(req: AnalyzeRequest):
                 memory_dir=(store.root if store else None),
                 model=req.model,
                 silent=True,
+                reasoning_effort=req.reasoning_effort,
             )
         if resolved in analyzer.LOCAL_BACKENDS:
             url, key = analyzer.LOCAL_BACKENDS[resolved]

@@ -39,6 +39,7 @@ class AnalyzeRequest(BaseModel):
     prompt: str
     backend: Optional[str] = None
     model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
     recall: str = "auto"
     recall_days: Optional[int] = None
     recall_limit: int = 8

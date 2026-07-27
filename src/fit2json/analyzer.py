@@ -140,11 +140,24 @@ def stream_copilot(
     When ``silent`` is True, passes ``--silent`` so the CLI emits *only* the final
     agent response — no tool-call trace or stats footer. Used by the web UI so saved
     analyses are clean prose + charts.
+
+    ``--model`` is only passed when ``model`` is given, so an unset model falls back to
+    the user's *configured* Copilot default (e.g. Opus). Forcing ``--model auto`` here
+    would silently override that default with the auto-router's coding-tuned pick and
+    produce terse, barebones coaching output — and ``auto`` also rejects
+    ``--reasoning-effort`` outright.
     """
     if not copilot_available():
         raise click.ClickException(
             "The 'copilot' CLI was not found on PATH. Install GitHub Copilot CLI, or use "
             "--backend ollama|lmstudio (or --base-url) for a local model."
+        )
+
+    if reasoning_effort and (model or "").strip().lower() == "auto":
+        raise click.ClickException(
+            "The 'auto' model does not support --reasoning-effort. Pass an explicit "
+            "--model (e.g. a Claude/GPT model) to use reasoning effort, or omit "
+            "--reasoning-effort."
         )
 
     full_prompt = _build_copilot_prompt(prompt, workout_paths, memory_dir)
@@ -155,8 +168,9 @@ def stream_copilot(
         "--allow-all-tools",
         "--no-color",
         "--log-level", "none",
-        "--model", model or "auto",
     ]
+    if model:
+        cmd += ["--model", model]
     if silent:
         cmd.append("--silent")
     if reasoning_effort:
