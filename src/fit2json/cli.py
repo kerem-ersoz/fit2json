@@ -135,12 +135,15 @@ def fetch():
 @click.option("--email", default=None, help="Garmin Connect email.")
 @click.option("--password", default=None, help="Garmin Connect password.")
 @click.option("--raw-dir", default=None, help="Directory to keep raw .fit files.")
-def fetch_garmin(days, output_path, gzip_out, email, password, raw_dir):
+@click.option("--token-dir", default=None,
+              help="Garmin session token cache dir (or set GARMINTOKENS; default ~/.garminconnect). "
+                   "Reuses a saved session so frequent polling avoids CAPTCHA / rate limiting.")
+def fetch_garmin(days, output_path, gzip_out, email, password, raw_dir, token_dir):
     """Fetch Garmin Connect activities and store them as lossless JSON."""
     from fit2json.sources.garmin import fetch_garmin_activities
 
     fit_files = fetch_garmin_activities(
-        days=days, output_dir=raw_dir, email=email, password=password
+        days=days, output_dir=raw_dir, email=email, password=password, token_dir=token_dir
     )
     if not fit_files:
         return
