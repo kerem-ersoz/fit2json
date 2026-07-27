@@ -13,6 +13,7 @@ Sends workout JSON plus a custom prompt to a pluggable backend:
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -29,7 +30,8 @@ SYSTEM_PROMPT = (
     "workout data provided as structured JSON (a faithful, lossless decode of the "
     "athlete's .fit files) and give specific, actionable feedback grounded in the actual "
     "numbers. When prior workout analyses are provided as memory/context, use them to "
-    "comment on progress and trends over time. Use markdown for readability."
+    "comment on progress and trends over time. Use markdown for readability. Respond with "
+    "only the final analysis — do not narrate your process, tool use, or file reads."
 )
 
 # Appended to the prompt (web UI only) to let the model draw bespoke, insightful charts
@@ -62,6 +64,34 @@ def copilot_available() -> bool:
     return shutil.which("copilot") is not None
 
 
+# The reasoning-effort levels the Copilot CLI exposes. Discovered from the installed CLI
+# (`--reasoning-effort` choices) so it matches exactly, with a known fallback.
+REASONING_EFFORTS_FALLBACK = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+_effort_cache: Optional[List[str]] = None
+
+
+def copilot_reasoning_efforts() -> List[str]:
+    """The reasoning-effort choices the installed Copilot CLI accepts (parsed once, cached)."""
+    global _effort_cache
+    if _effort_cache is not None:
+        return _effort_cache
+    efforts = list(REASONING_EFFORTS_FALLBACK)
+    if copilot_available():
+        try:
+            out = subprocess.run(
+                ["copilot", "--help"], capture_output=True, text=True, timeout=10
+            ).stdout
+            match = re.search(r"reasoning effort level \(choices:\s*(.+?)\)", out, re.S)
+            if match:
+                found = re.findall(r'"([^"]+)"', match.group(1))
+                if found:
+                    efforts = found
+        except Exception:
+            pass
+    _effort_cache = efforts
+    return efforts
+
+
 def resolve_backend(backend: Optional[str], base_url: Optional[str]) -> str:
     """Pick a backend name. Auto-detects copilot (if installed) else ollama."""
     if base_url:
@@ -80,11 +110,20 @@ def _build_copilot_prompt(
     prompt: str,
     workout_paths: List[Path],
     memory_dir: Optional[Path],
+    library_dir: Optional[Path] = None,
 ) -> str:
     lines = [SYSTEM_PROMPT, ""]
     if workout_paths:
         lines.append("Workout data to analyze (lossless FIT JSON), read these files:")
         lines += [f"  - {p}" for p in workout_paths]
+        lines.append("")
+    if library_dir is not None:
+        lines.append(
+            f"The athlete's full workout library (one lossless FIT JSON per activity) is under: "
+            f"{library_dir}\n"
+            "Filenames are date- and sport-stamped. Browse it to find the workouts relevant to the "
+            "request, then read those files."
+        )
         lines.append("")
     if memory_dir is not None:
         lines.append(
@@ -131,6 +170,7 @@ def stream_copilot(
     model: Optional[str] = None,
     silent: bool = True,
     reasoning_effort: Optional[str] = None,
+    library_dir: Optional[Path] = None,
 ) -> Iterator[str]:
     """Yield analysis text chunks from the GitHub Copilot CLI subprocess.
 
@@ -139,7 +179,8 @@ def stream_copilot(
 
     When ``silent`` is True, passes ``--silent`` so the CLI emits *only* the final
     agent response — no tool-call trace or stats footer. Used by the web UI so saved
-    analyses are clean prose + charts.
+    analyses are clean prose + charts. ``library_dir`` grants the agent access to the
+    whole workout library so it can find relevant workouts itself (freeform mode).
     """
     if not copilot_available():
         raise click.ClickException(
@@ -147,7 +188,7 @@ def stream_copilot(
             "--backend ollama|lmstudio (or --base-url) for a local model."
         )
 
-    full_prompt = _build_copilot_prompt(prompt, workout_paths, memory_dir)
+    full_prompt = _build_copilot_prompt(prompt, workout_paths, memory_dir, library_dir)
 
     cmd = [
         "copilot",
@@ -164,6 +205,8 @@ def stream_copilot(
     allow_dirs = {str(p.parent.resolve()) for p in workout_paths}
     if memory_dir is not None:
         allow_dirs.add(str(Path(memory_dir).resolve()))
+    if library_dir is not None:
+        allow_dirs.add(str(Path(library_dir).resolve()))
     for d in sorted(allow_dirs):
         cmd += ["--add-dir", d]
 

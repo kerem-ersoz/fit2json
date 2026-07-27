@@ -5,7 +5,7 @@ import { api, type AnalysisEntry } from '../lib/api'
 import { sportMeta } from '../lib/sport'
 import { formatDate } from '../lib/format'
 import { EmptyState, ErrorState, LoadingState } from '../components/ui/Feedback'
-import { MarkdownView } from '../components/ui/Markdown'
+import { AnalysisView } from '../features/activities/AnalysisView'
 
 function MemoryEntryItem({ entry }: { entry: AnalysisEntry }) {
   const [open, setOpen] = useState(false)
@@ -38,7 +38,11 @@ function MemoryEntryItem({ entry }: { entry: AnalysisEntry }) {
         {isLoading || !data ? (
           <p className="text-sm text-slate-400">Loading…</p>
         ) : (
-          <MarkdownView>{data.content ?? ''}</MarkdownView>
+          <AnalysisView
+            content={data.content ?? ''}
+            prompt={data.prompt}
+            meta={`${data.backend ?? ''}${data.model ? ` · ${data.model}` : ''}`}
+          />
         )}
       </div>
     </details>

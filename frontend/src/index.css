@@ -20,3 +20,15 @@ body {
 .u-legend {
   font-size: 0.75rem;
 }
+
+/* Reduced-motion: neutralize animations/transitions for users who ask for it. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

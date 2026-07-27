@@ -10,20 +10,24 @@ import { Badge } from '../../components/ui/Badge'
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <div className="truncate text-sm font-semibold text-slate-900">{value}</div>
-      <div className="text-[11px] uppercase tracking-wide text-slate-400">{label}</div>
+      <div className="truncate text-sm font-semibold tabular-nums text-slate-900">{value}</div>
+      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</div>
     </div>
   )
 }
 
-export function ActivityCard({ activity }: { activity: ActivitySummary }) {
+export function ActivityCard({ activity, linkHash }: { activity: ActivitySummary; linkHash?: string }) {
   const { label, Icon } = sportMeta(activity.sport)
   const { fmt } = useUnits()
   const m = activity.metrics
 
   return (
-    <Link to={`/activities/${encodeURIComponent(activity.id)}`} className="block">
-      <Card className="h-full transition-shadow hover:shadow-md">
+    <Link
+      to={`/activities/${encodeURIComponent(activity.id)}${linkHash ? `#${linkHash}` : ''}`}
+      data-activity-card
+      className="group block rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
+    >
+      <Card className="h-full transition-shadow group-hover:shadow-md">
         <div className="flex items-center gap-3 border-b border-slate-100 p-4">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-600">
             <Icon className="h-5 w-5" />
