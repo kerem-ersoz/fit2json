@@ -23,7 +23,7 @@ jobs:
 
       - name: Install dependencies and run tests
         run: |
-          pip install -e ".[dev]"
+          pip install -e ".[dev,web]"
           pytest tests/ -v
 
   build-and-push:
