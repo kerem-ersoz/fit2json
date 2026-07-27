@@ -228,7 +228,7 @@ class Library:
             "source_file": act.source_file,
             "source": source,
             "source_ref": derive_source_ref(source, act.source_file),
-            "metrics": _session_metrics(act),
+            "metrics": _clean_metrics(_session_metrics(act)),
             "record_count": act.message_counts.get("record", 0),
             "available_series": available_series,
             "has_gps": has_gps,
@@ -271,6 +271,24 @@ def _memory_store() -> MemoryStore:
     return MemoryStore(get_settings().memory_dir)
 
 
+def _scalar(value: Any) -> Any:
+    """Unwrap a lossless multi-value field (e.g. [5.42, None]) to one value.
+
+    The lossless decoder keeps repeated FIT fields as lists; headline metrics want a
+    single number, so take the first non-None element.
+    """
+    if isinstance(value, list):
+        for item in value:
+            if item is not None:
+                return item
+        return None
+    return value
+
+
+def _clean_metrics(metrics: Dict[str, Any]) -> Dict[str, Any]:
+    return {k: _scalar(v) for k, v in metrics.items()}
+
+
 # ── public accessors used by the routes ─────────────────────────────────────────
 
 
@@ -295,7 +313,7 @@ def get_detail(activity_id: str) -> Optional[Dict[str, Any]]:
         "source_ref": derive_source_ref(loc.source, act.source_file),
         "message_counts": act.message_counts,
         "field_units": act.field_units,
-        "metrics": _session_metrics(act),
+        "metrics": _clean_metrics(_session_metrics(act)),
         "session": session,
         "available_series": available_series,
         "has_gps": has_gps,

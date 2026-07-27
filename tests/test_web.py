@@ -272,6 +272,18 @@ def test_fetch_unknown_platform(empty_client):
     assert empty_client.post("/api/fetch/nope", json={"days": 7}).status_code == 404
 
 
+def test_metrics_unwrap_multivalue():
+    """Lossless multi-value fields (e.g. enhanced_avg_speed=[5.42, None]) unwrap to a scalar."""
+    from fit2json.web import services
+
+    assert services._scalar([5.42, None]) == 5.42
+    assert services._scalar([None, 3.0]) == 3.0
+    assert services._scalar([None, None]) is None
+    assert services._scalar(7) == 7
+    cleaned = services._clean_metrics({"avg_speed_mps": [5.42, None], "avg_hr": 150})
+    assert cleaned == {"avg_speed_mps": 5.42, "avg_hr": 150}
+
+
 def test_legacy_0_1_format_shim():
     """fit2json 0.1 'compact' activities (summary/time_series) still populate the UI."""
     from fit2json.memory import _session_metrics
