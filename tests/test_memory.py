@@ -51,6 +51,32 @@ class TestRecord:
         a = _activity()
         assert activity_id(a) == activity_id(_activity())
 
+    def test_legacy_compact_schema_metadata_and_metrics(self, tmp_path):
+        """Legacy 0.1 compact files (no messages.session) still resolve sport/date/metrics."""
+        legacy = DecodedActivity.from_dict({
+            "source_file": "2025-12-29_run.fit",
+            "sport": "running",
+            "start_time": "2025-12-29T23:34:30+00:00",
+            "summary": {
+                "total_distance_km": 5.536,
+                "total_duration_s": 2320.0,
+                "avg_heart_rate_bpm": 180,
+                "max_heart_rate_bpm": 190,
+                "avg_power_w": 277,
+                "total_calories": 408,
+            },
+        })
+        assert legacy.sport == "running"
+        assert legacy.start_time == "2025-12-29T23:34:30+00:00"
+        assert activity_id(legacy).startswith("2025-12-29T233430")
+
+        store = MemoryStore(tmp_path)
+        path = store.record(legacy, "How was it?", "Solid tempo run.")
+        assert path.parent.name == "running"
+        entry = store.load_index()[0]
+        assert entry["metrics"]["distance_m"] == 5536.0
+        assert entry["metrics"]["avg_hr"] == 180
+
 
 class TestRecall:
     def _seed(self, tmp_path):

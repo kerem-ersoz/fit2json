@@ -36,14 +36,26 @@ class DecodedActivity:
     source_file: str
     messages: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
     field_units: Dict[str, str] = field(default_factory=dict)
+    # Fallbacks for the legacy 0.1 "compact" schema (summary/laps/time_series_1min),
+    # which has no `messages.session`; top-level sport/start_time/summary are used instead.
+    sport_hint: Optional[Any] = None
+    start_time_hint: Optional[str] = None
+    summary_hint: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "DecodedActivity":
-        """Reconstruct from a serialized workout dict (sport/start_time re-derived)."""
+        """Reconstruct from a serialized workout dict.
+
+        Prefers the lossless `messages` tree; falls back to the legacy compact
+        schema's top-level `sport`/`start_time`/`summary` when messages are absent.
+        """
         return cls(
             source_file=data.get("source_file", "unknown"),
             messages=data.get("messages", {}) or {},
             field_units=data.get("field_units", {}) or {},
+            sport_hint=data.get("sport"),
+            start_time_hint=data.get("start_time"),
+            summary_hint=data.get("summary", {}) or {},
         )
 
     @property
@@ -55,6 +67,8 @@ class DecodedActivity:
     def sport(self) -> Optional[str]:
         """Best-effort sport name, derived from the session message."""
         val = self._session.get("sport")
+        if val is None:
+            val = self.sport_hint  # legacy compact schema (top-level sport)
         if isinstance(val, str):
             return val.lower()
         if isinstance(val, int):
@@ -71,6 +85,7 @@ class DecodedActivity:
             activity.get("local_timestamp"),
             activity.get("timestamp"),
             record.get("timestamp"),
+            self.start_time_hint,  # legacy compact schema (top-level start_time)
         ):
             if candidate:
                 return candidate

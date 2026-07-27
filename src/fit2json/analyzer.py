@@ -86,6 +86,7 @@ def run_copilot(
     memory_dir: Optional[Path] = None,
     model: Optional[str] = None,
     stream: bool = True,
+    reasoning_effort: Optional[str] = None,
 ) -> str:
     """Run analysis via the GitHub Copilot CLI subprocess."""
     if not copilot_available():
@@ -100,10 +101,13 @@ def run_copilot(
         "copilot",
         "-p", full_prompt,
         "--allow-all-tools",
+        "--silent",
         "--no-color",
         "--log-level", "none",
         "--model", model or "auto",
     ]
+    if reasoning_effort:
+        cmd += ["--reasoning-effort", reasoning_effort]
     allow_dirs = {str(p.parent.resolve()) for p in workout_paths}
     if memory_dir is not None:
         allow_dirs.add(str(Path(memory_dir).resolve()))
