@@ -288,3 +288,81 @@ def get_memory_entry(entry_id: str) -> Optional[Dict[str, Any]]:
         if entry.get("entry_id") == entry_id:
             return _entry_view(store, entry, with_body=True)
     return None
+
+
+# ── ingest (upload / fetch) ──────────────────────────────────────────────────
+
+
+def store_activities(
+    decoded: List[DecodedActivity], source: str
+) -> Dict[str, Any]:
+    """Write new activities to the library as JSON, deduped by activity id.
+
+    Re-uploading or re-fetching the same activity is a no-op (skipped), so the
+    library never accumulates duplicates. Returns the added summaries + skip count.
+    """
+    from fit2json.output import write_per_activity
+
+    library_dir = get_settings().library_dir
+    library_dir.mkdir(parents=True, exist_ok=True)
+
+    lib = get_library()
+    existing = {s["id"] for s in lib.list()}
+    added_ids: List[str] = []
+    skipped = 0
+
+    for act in decoded:
+        aid = activity_filename(act, 0)
+        if aid in existing:
+            skipped += 1
+            continue
+        write_per_activity([act], str(library_dir), source=source)
+        existing.add(aid)
+        added_ids.append(aid)
+
+    lib._sig = None  # force re-index so the new files are picked up
+    added_set = set(added_ids)
+    added = [s for s in lib.list() if s["id"] in added_set]
+    return {"added": added, "skipped": skipped}
+
+
+def fetch_and_store(
+    platform: str,
+    days: int,
+    email: Optional[str] = None,
+    password: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Fetch recent activities from Garmin/Strava and store the new ones."""
+    import tempfile
+
+    from fit2json.parser import decode_fit_file
+
+    raw_dir = tempfile.mkdtemp(prefix="fitsift_fetch_")
+    decoded: List[DecodedActivity] = []
+
+    if platform == "garmin":
+        from fit2json.sources.garmin import fetch_garmin_activities
+
+        paths = fetch_garmin_activities(
+            days=days, output_dir=raw_dir, email=email, password=password, interactive=False
+        )
+        for p in paths:
+            try:
+                decoded.append(decode_fit_file(p))
+            except Exception:
+                continue
+    elif platform == "strava":
+        from fit2json.sources.strava import fetch_strava_activities, parse_strava_json
+
+        paths = fetch_strava_activities(days=days, output_dir=raw_dir)
+        for p in paths:
+            try:
+                decoded.append(parse_strava_json(p))
+            except Exception:
+                continue
+    else:
+        raise ValueError(f"Unknown platform: {platform}")
+
+    result = store_activities(decoded, source=platform)
+    result["fetched"] = len(decoded)
+    return result

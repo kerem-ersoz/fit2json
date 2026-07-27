@@ -102,6 +102,18 @@ export interface AnalysisEntry {
   content?: string
 }
 
+export interface IngestResult {
+  added: ActivitySummary[]
+  skipped: number
+  errors: { file: string; error: string }[]
+}
+
+export interface FetchResult {
+  added: ActivitySummary[]
+  skipped: number
+  fetched: number
+}
+
 export const api = {
   config: () => getJSON<AppConfig>('/config'),
   activities: () => getJSON<ActivitySummary[]>('/activities'),
@@ -124,6 +136,34 @@ export const api = {
   memoryEntry: (entryId: string) =>
     getJSON<AnalysisEntry>(`/memory/${encodeURIComponent(entryId)}`),
   rawUrl: (id: string) => `${API_BASE}/activities/${encodeURIComponent(id)}/raw`,
+
+  uploadFit: async (files: File[]): Promise<IngestResult> => {
+    const form = new FormData()
+    for (const f of files) form.append('files', f)
+    const res = await fetch(`${API_BASE}/convert`, { method: 'POST', body: form })
+    if (!res.ok) throw new Error(await errorText(res))
+    return (await res.json()) as IngestResult
+  },
+
+  fetchFrom: async (platform: 'garmin' | 'strava', days: number): Promise<FetchResult> => {
+    const res = await fetch(`${API_BASE}/fetch/${platform}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ days }),
+    })
+    if (!res.ok) throw new Error(await errorText(res))
+    return (await res.json()) as FetchResult
+  },
+}
+
+async function errorText(res: Response): Promise<string> {
+  try {
+    const body = await res.json()
+    if (body?.detail) return body.detail
+  } catch {
+    /* ignore */
+  }
+  return `${res.status} ${res.statusText}`
 }
 
 export interface AnalyzeBody {

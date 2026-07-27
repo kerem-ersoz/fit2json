@@ -44,3 +44,9 @@ class AnalyzeRequest(BaseModel):
     recall_limit: int = 8
     no_memory: bool = False
     charts: bool = True
+
+
+class FetchRequest(BaseModel):
+    days: int = 30
+    email: Optional[str] = None
+    password: Optional[str] = None

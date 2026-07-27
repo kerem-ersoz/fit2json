@@ -194,3 +194,79 @@ def test_analyze_charts_can_be_disabled(client, monkeypatch):
     )
     assert r.status_code == 200
     assert "fitsift-chart" not in captured["prompt"]
+
+
+@pytest.fixture()
+def empty_client(tmp_path, monkeypatch):
+    """A TestClient wired to an empty library (for ingest tests)."""
+    library = tmp_path / "json"
+    library.mkdir()
+    monkeypatch.setenv("FITSIFT_LIBRARY", str(library))
+    monkeypatch.setenv("FITSIFT_MEMORY", str(tmp_path / "memory"))
+
+    from fit2json.web import app as app_module
+    from fit2json.web import services
+
+    services._libraries.clear()
+    importlib.reload(app_module)
+    return TestClient(app_module.create_app())
+
+
+def _fixture_bytes():
+    with open(FIXTURE, "rb") as fh:
+        return fh.read()
+
+
+def test_convert_upload_and_dedup(empty_client):
+    data = _fixture_bytes()
+
+    r = empty_client.post(
+        "/api/convert", files=[("files", ("sample.fit", data, "application/octet-stream"))]
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["added"]) == 1
+    assert body["skipped"] == 0
+    assert body["added"][0]["sport"] == "running"
+    assert len(empty_client.get("/api/activities").json()) == 1
+
+    # Re-uploading the same activity is deduped, not duplicated.
+    r2 = empty_client.post(
+        "/api/convert", files=[("files", ("sample.fit", data, "application/octet-stream"))]
+    )
+    body2 = r2.json()
+    assert body2["added"] == []
+    assert body2["skipped"] == 1
+    assert len(empty_client.get("/api/activities").json()) == 1
+
+
+def test_convert_rejects_non_fit(empty_client):
+    r = empty_client.post(
+        "/api/convert", files=[("files", ("notes.txt", b"hello", "text/plain"))]
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["added"] == []
+    assert len(body["errors"]) == 1
+    assert body["errors"][0]["file"] == "notes.txt"
+
+
+def test_fetch_garmin_stores(empty_client, monkeypatch):
+    from pathlib import Path
+
+    from fit2json.sources import garmin as garmin_src
+
+    monkeypatch.setattr(
+        garmin_src, "fetch_garmin_activities", lambda **kwargs: [Path(FIXTURE)]
+    )
+
+    r = empty_client.post("/api/fetch/garmin", json={"days": 7})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["fetched"] == 1
+    assert len(body["added"]) == 1
+    assert body["added"][0]["source"] == "garmin"
+
+
+def test_fetch_unknown_platform(empty_client):
+    assert empty_client.post("/api/fetch/nope", json={"days": 7}).status_code == 404
