@@ -265,6 +265,10 @@ def fetch_strava(days, output_path, gzip_out, client_id, client_secret, refresh_
               help="Analysis backend. Auto-detects Copilot CLI, else Ollama.")
 @click.option("--base-url", default=None, help="Custom OpenAI-compatible endpoint.")
 @click.option("--model", default=None, help="Model name (backend-specific).")
+@click.option("--reasoning-effort", "--effort", "reasoning_effort",
+              type=click.Choice(["none", "minimal", "low", "medium", "high", "xhigh", "max"]),
+              default=None,
+              help="Reasoning effort for the copilot backend (passed to the Copilot CLI).")
 @click.option("--api-key", default=None, help="API key for a custom --base-url endpoint.")
 @click.option("--no-stream", is_flag=True, help="Disable streaming output.")
 @click.option("--max-chars", type=int, default=200_000,
@@ -276,7 +280,7 @@ def fetch_strava(days, output_path, gzip_out, client_id, client_secret, refresh_
               default="auto", help="Which past memories to recall as context.")
 @click.option("--recall-days", type=int, default=None, help="Only recall memories within N days.")
 @click.option("--recall-limit", type=int, default=8, help="Max memories to recall (default: 8).")
-def analyze(source, prompt, backend, base_url, model, api_key, no_stream, max_chars,
+def analyze(source, prompt, backend, base_url, model, reasoning_effort, api_key, no_stream, max_chars,
             memory_dir, no_memory, recall, recall_days, recall_limit):
     """Analyze workout JSON with an LLM, using and updating training memory.
 
@@ -339,6 +343,7 @@ def analyze(source, prompt, backend, base_url, model, api_key, no_stream, max_ch
             memory_dir=(store.root if store else None),
             model=model,
             stream=not no_stream,
+            reasoning_effort=reasoning_effort,
         )
     else:
         if base_url:
