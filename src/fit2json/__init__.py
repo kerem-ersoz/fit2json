@@ -1,3 +1,3 @@
-"""fit2json — Convert .fit files to LLM-ready JSON."""
+"""fit2json — pull workouts, store them as lossless JSON, analyze with an LLM."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
