@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from fit2json.memory import MemoryStore, _session_metrics
 from fit2json.memory import activity_id as memory_activity_id
 from fit2json.models import DecodedActivity
-from fit2json.output import activities_from_obj, activity_filename
+from fit2json.output import activity_filename
 from fit2json.web import streams as streams_mod
 from fit2json.web.config import get_settings
 

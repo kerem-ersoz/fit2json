@@ -16,7 +16,6 @@ from click.testing import CliRunner
 from fit2json.cli import cli
 from fit2json.sources.garmin import fetch_garmin_activities
 
-
 # ── Fakes ──────────────────────────────────────────────────────────────────────
 
 
@@ -236,3 +235,67 @@ class TestGarminCLI:
         assert result.exit_code == 0
         assert "--token-dir" in result.output
         assert "--raw-dir" in result.output
+
+    def test_fetch_garmin_help_lists_watch_options(self):
+        result = CliRunner().invoke(cli, ["fetch", "garmin", "--help"])
+        assert result.exit_code == 0
+        for opt in ("--watch", "--interval", "--max-runs"):
+            assert opt in result.output
+
+    def test_fetch_strava_help_lists_watch_options(self):
+        result = CliRunner().invoke(cli, ["fetch", "strava", "--help"])
+        assert result.exit_code == 0
+        for opt in ("--watch", "--interval", "--max-runs"):
+            assert opt in result.output
+
+
+class TestGarminWatchWiring:
+    """The --watch loop must run headlessly: bounded cycles, forced non-interactive."""
+
+    def _patch_fetch(self, monkeypatch):
+        calls = []
+
+        def fake(*args, **kwargs):
+            calls.append((args, kwargs))
+            return []  # no files -> skip decode/emit
+
+        monkeypatch.setattr(
+            "fit2json.sources.garmin.fetch_garmin_activities", fake
+        )
+        return calls
+
+    def test_watch_runs_bounded_and_forces_non_interactive(self, monkeypatch):
+        calls = self._patch_fetch(monkeypatch)
+
+        result = CliRunner().invoke(
+            cli, ["fetch", "garmin", "--watch", "--max-runs", "1", "--interval", "5"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert len(calls) == 1
+        # interactive is the 6th positional arg and must be False in watch mode so
+        # a headless parent process is never blocked on an MFA prompt.
+        args, _ = calls[0]
+        assert args[5] is False
+        assert "[watch]" in result.output
+
+    def test_non_watch_leaves_interactive_auto(self, monkeypatch):
+        calls = self._patch_fetch(monkeypatch)
+
+        result = CliRunner().invoke(cli, ["fetch", "garmin"])
+
+        assert result.exit_code == 0, result.output
+        assert len(calls) == 1
+        args, _ = calls[0]
+        # None => fetch_garmin_activities auto-detects interactivity via isatty().
+        assert args[5] is None
+
+    def test_watch_rejects_non_positive_interval(self, monkeypatch):
+        self._patch_fetch(monkeypatch)
+
+        result = CliRunner().invoke(
+            cli, ["fetch", "garmin", "--watch", "--interval", "0"]
+        )
+
+        assert result.exit_code != 0
+        assert "positive" in result.output.lower()

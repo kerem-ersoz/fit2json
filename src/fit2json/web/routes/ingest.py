@@ -55,4 +55,4 @@ def fetch(platform: str, req: FetchRequest):
         raise
     except Exception as exc:  # click.ClickException / requests errors → friendly 400
         message = getattr(exc, "message", None) or str(exc)
-        raise HTTPException(status_code=400, detail=message)
+        raise HTTPException(status_code=400, detail=message) from exc

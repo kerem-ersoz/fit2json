@@ -69,113 +69,120 @@ fit2json analyze workouts/ -p "How is my fitness trending?" --backend ollama
 
 ---
 
-## Automatic / continuous export (macOS, Docker + launchd)
+## Continuous export (watch mode)
 
 Export your workouts **automatically, shortly after they sync to Garmin Connect** — no
-manual `fetch` needed. A small background job polls Garmin on a schedule (default **every
-15 minutes**), downloads only new activities, and writes them to a local library.
+manual `fetch`, and no OS-specific scheduler. `fit2json fetch garmin --watch` runs a small
+polling loop built into the CLI (default **every 15 minutes**) that downloads only new
+activities and writes them to a local library. The same command works on macOS, Linux,
+Windows, and inside a container.
 
 > **Near-real-time, not instant.** The unofficial Garmin integration has no push/webhook,
-> so this is **poll-based** (~15 min latency), not an instant sync.
->
-> **Docker Desktop must be running.** The job runs in Docker. If the daemon is down (e.g.
-> the laptop just woke up), the run logs a message and exits cleanly — it simply catches up
-> on the next tick.
+> so this is **poll-based** (~15 min latency by default; tune with `--interval`).
 
 ### How it works
 
-- **Session reuse:** a one-time interactive login caches your Garmin session tokens; every
-  poll resumes from that cache instead of logging in fresh (fresh logins every 15 min would
-  quickly trigger Garmin CAPTCHA / rate limiting).
+- **Built-in, cross-platform scheduler:** the loop lives in the CLI itself
+  (`src/fit2json/watch.py`) — no cron, launchd, or Task Scheduler required.
+- **Headless & non-blocking:** in `--watch` mode it never prompts (e.g. for MFA) and
+  streams progress as it runs, so a parent process (a service supervisor or a GUI
+  frontend) can spawn it in the background without being blocked.
+- **Clean shutdown:** it stops promptly on `Ctrl-C` / `SIGTERM`, so `docker stop`,
+  `systemctl stop`, or a frontend "stop" button shut it down gracefully — even mid-interval.
+- **Resilient:** a failing cycle (network blip, expired token, daemon asleep) is logged and
+  the loop keeps polling — one bad poll never tears down the daemon.
+- **Session reuse:** every poll resumes the cached Garmin session instead of logging in
+  fresh (which would quickly trigger Garmin CAPTCHA / rate limiting).
 - **Incremental:** raw `.fit` files are a permanent archive; any activity already downloaded
   is skipped, so each poll only fetches what's new.
 
+### 1. One-time login (seed the session; handles 2FA/MFA)
+
+`--watch` is non-interactive and never prompts, so log in **once** interactively first to
+cache your Garmin session tokens:
+
+```bash
+export GARMIN_EMAIL=you@example.com GARMIN_PASSWORD=yourpassword
+fit2json fetch garmin --days 1 --raw-dir ~/.fit2json/fit -o ~/.fit2json/json
+```
+
+Enter the MFA code if prompted. Tokens are cached in the token dir (default
+`~/.garminconnect`, or set `GARMINTOKENS` / `--token-dir`) so later `--watch` runs resume
+the session without prompting.
+
+### 2. Run it
+
+```bash
+fit2json fetch garmin --watch --interval 900 \
+  --raw-dir ~/.fit2json/fit -o ~/.fit2json/json
+```
+
+Stop with `Ctrl-C` (or send `SIGTERM`). Useful flags: `--interval SECONDS` (default 900)
+and `--max-runs N` (stop after N cycles — handy for testing). `fetch strava` accepts the
+same `--watch` flags.
+
+### Running it in the background
+
+`--watch` is just a long-lived process that exits cleanly on `SIGTERM`, so any supervisor
+works. A few examples:
+
+**Docker** (survives reboots; `docker stop` shuts it down cleanly):
+
+```bash
+docker run -d --name fit2json-garmin --restart unless-stopped \
+  --env-file ~/.fit2json.env \
+  -e GARMINTOKENS=/tokens \
+  -v ~/.fit2json/garmintokens:/tokens \
+  -v ~/.fit2json/library:/data \
+  ghcr.io/kerem-ersoz/fit2json:latest \
+  fetch garmin --watch --interval 900 --raw-dir /data/fit -o /data/json
+```
+
+Seed the token cache once with the **same volumes** but interactively and without `--watch`:
+
+```bash
+docker run -it --rm \
+  --env-file ~/.fit2json.env -e GARMINTOKENS=/tokens \
+  -v ~/.fit2json/garmintokens:/tokens -v ~/.fit2json/library:/data \
+  ghcr.io/kerem-ersoz/fit2json:latest \
+  fetch garmin --days 1 --raw-dir /data/fit -o /data/json
+```
+
+**Linux — systemd user service** (`~/.config/systemd/user/fit2json.service`):
+
+```ini
+[Unit]
+Description=fit2json Garmin auto-export
+After=network-online.target
+
+[Service]
+Environment=GARMINTOKENS=%h/.fit2json/garmintokens
+EnvironmentFile=%h/.fit2json.env
+ExecStart=%h/.local/bin/fit2json fetch garmin --watch --interval 900 --raw-dir %h/.fit2json/fit -o %h/.fit2json/json
+Restart=always
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user enable --now fit2json
+```
+
+**macOS / Windows:** run it in a terminal, or supervise the same command with launchd
+(`KeepAlive`), `nssm`, or Windows Task Scheduler ("at log on", restart on failure).
+
 ### Where files land
+
+You choose the layout via `--raw-dir` / `-o` (and volume mounts in Docker):
 
 ```
 ~/.fit2json/
-├── library/
-│   ├── fit/         # raw .fit archive (permanent)  → /data/fit in the container
-│   └── json/        # one JSON per activity          → /data/json
-├── garmintokens/    # cached Garmin session (GARMINTOKENS)
-├── logs/            # garmin-export.log, launchd.out.log, launchd.err.log
-~/.fit2json.env      # your Garmin credentials (not baked into the job)
+├── fit/                # raw .fit archive (permanent)   → --raw-dir
+└── json/               # one JSON per activity          → -o
+<GARMINTOKENS dir>      # cached Garmin session (default ~/.garminconnect)
+~/.fit2json.env         # Garmin credentials for the one-time seed / Docker --env-file
 ```
-
-### Setup
-
-**1. Pull the image and create your credentials file**
-
-```bash
-docker pull ghcr.io/kerem-ersoz/fit2json:latest
-
-printf 'GARMIN_EMAIL=you@example.com\nGARMIN_PASSWORD=yourpassword\n' > ~/.fit2json.env
-chmod 600 ~/.fit2json.env
-```
-
-**2. Seed the token cache (one time, interactive — handles 2FA/MFA)**
-
-```bash
-./scripts/seed-garmin-login.sh
-```
-
-This logs in once and saves your session to `~/.fit2json/garmintokens`. If your account uses
-two-factor auth, enter the code when prompted. Do this before enabling the background job so
-the automated (non-interactive) polls never need to prompt.
-
-**3. Install the background job**
-
-```bash
-./scripts/install-launchd.sh
-```
-
-This templates `deploy/com.fit2json.garmin-export.plist` with absolute paths, installs it to
-`~/Library/LaunchAgents/`, and loads it. It runs once immediately, then every 15 minutes.
-
-### Changing the interval
-
-Install with a different `StartInterval` (seconds):
-
-```bash
-INTERVAL=600 ./scripts/install-launchd.sh   # poll every 10 minutes
-```
-
-Or edit `StartInterval` in `~/Library/LaunchAgents/com.fit2json.garmin-export.plist` and
-re-run `./scripts/install-launchd.sh`.
-
-### Viewing logs
-
-```bash
-tail -f ~/.fit2json/logs/garmin-export.log
-```
-
-### Uninstalling
-
-```bash
-./scripts/uninstall-launchd.sh
-```
-
-Your archived `.fit`/JSON files and cached tokens under `~/.fit2json` are left in place.
-
-### Troubleshooting
-
-- **Nothing is being exported** — confirm Docker Desktop is running and check
-  `~/.fit2json/logs/garmin-export.log`.
-- **`No cached Garmin session ...` in the log** — the cached session expired or was revoked.
-  Re-run `./scripts/seed-garmin-login.sh` to refresh it.
-- **`docker: command not found` under launchd** — the plist adds `/usr/local/bin` and
-  `/opt/homebrew/bin` to `PATH`; if your Docker CLI is elsewhere, add that path to the
-  `EnvironmentVariables` `PATH` entry in the plist and reinstall.
-
-### Overriding paths
-
-All scripts honor these environment variables (defaults shown):
-`FIT2JSON_IMAGE` (`ghcr.io/kerem-ersoz/fit2json:latest`),
-`FIT2JSON_LIB_DIR` (`~/.fit2json/library`),
-`FIT2JSON_TOKEN_DIR` (`~/.fit2json/garmintokens`),
-`FIT2JSON_ENV_FILE` (`~/.fit2json.env`),
-`FIT2JSON_LOG_DIR` (`~/.fit2json/logs`),
-`FIT2JSON_DAYS` (`1`).
 
 ---
 
@@ -216,12 +223,15 @@ fit2json fetch garmin --days 7 --raw-dir ./raw-fits/ -o workouts/
 | `--email` / `--password` | Garmin credentials (or `GARMIN_EMAIL` / `GARMIN_PASSWORD`). |
 | `--raw-dir PATH` | Keep the raw `.fit` files too (persistent archive — already-downloaded activities are skipped). |
 | `--token-dir PATH` | Garmin session token-cache dir (or set `GARMINTOKENS`; default `~/.garminconnect`). Reuses a saved session instead of logging in fresh each run. |
+| `--watch` | Poll continuously with a built-in cross-platform scheduler (no cron/launchd). Stops cleanly on `Ctrl-C` / `SIGTERM`. |
+| `--interval SECONDS` | Seconds between polls in `--watch` mode (default: 900 = 15 min). |
+| `--max-runs N` | In `--watch` mode, stop after N cycles (default: run until stopped). |
 
 > **Session reuse & incremental fetch:** the first run logs in and caches the session tokens
 > in the token dir; later runs resume from that cache (no fresh login, which avoids Garmin
 > CAPTCHA / rate limiting). With a persistent `--raw-dir`, any activity whose `.fit` already
 > exists is skipped, and `-o <dir>` writes one JSON per new activity — so frequent polling
-> stays cheap. See [Automatic / continuous export](#automatic--continuous-export-macos-docker--launchd).
+> stays cheap. See [Continuous export (watch mode)](#continuous-export-watch-mode).
 
 ### `fit2json fetch strava`
 

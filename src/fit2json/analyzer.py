@@ -17,10 +17,12 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Iterator, List, Optional
+from typing import TYPE_CHECKING, Iterator, List, Optional
 
 import click
 
+if TYPE_CHECKING:
+    from openai.types.chat import ChatCompletionMessageParam
 
 SYSTEM_PROMPT = (
     "You are an expert running/cycling/fitness coach and data analyst. You analyze "
@@ -103,7 +105,8 @@ def run_copilot(
     memory_dir: Optional[Path] = None,
     model: Optional[str] = None,
     stream: bool = True,
-    silent: bool = False,
+    silent: bool = True,
+    reasoning_effort: Optional[str] = None,
 ) -> str:
     """Run analysis via the GitHub Copilot CLI subprocess.
 
@@ -111,7 +114,9 @@ def run_copilot(
     (optionally) echoes them to stdout, preserving the original CLI behavior.
     """
     chunks: List[str] = []
-    for chunk in stream_copilot(prompt, workout_paths, memory_dir, model, silent=silent):
+    for chunk in stream_copilot(
+        prompt, workout_paths, memory_dir, model, silent=silent, reasoning_effort=reasoning_effort
+    ):
         chunks.append(chunk)
         if stream:
             sys.stdout.write(chunk)
@@ -124,7 +129,8 @@ def stream_copilot(
     workout_paths: List[Path],
     memory_dir: Optional[Path] = None,
     model: Optional[str] = None,
-    silent: bool = False,
+    silent: bool = True,
+    reasoning_effort: Optional[str] = None,
 ) -> Iterator[str]:
     """Yield analysis text chunks from the GitHub Copilot CLI subprocess.
 
@@ -153,6 +159,8 @@ def stream_copilot(
     ]
     if silent:
         cmd.append("--silent")
+    if reasoning_effort:
+        cmd += ["--reasoning-effort", reasoning_effort]
     allow_dirs = {str(p.parent.resolve()) for p in workout_paths}
     if memory_dir is not None:
         allow_dirs.add(str(Path(memory_dir).resolve()))
@@ -177,8 +185,8 @@ def stream_copilot(
 def _make_client(base_url: str, api_key: str):
     try:
         from openai import OpenAI
-    except ImportError:  # pragma: no cover
-        raise click.ClickException("openai package required. Install with: pip install openai")
+    except ImportError as exc:  # pragma: no cover
+        raise click.ClickException("openai package required. Install with: pip install openai") from exc
     return OpenAI(base_url=base_url, api_key=api_key)
 
 
@@ -198,7 +206,7 @@ def _build_openai_messages(
     workout_json: str,
     memory_digest: Optional[str],
     max_chars: int,
-) -> List[dict]:
+) -> "List[ChatCompletionMessageParam]":
     """Build the system+user chat messages, compacting the workout JSON to fit."""
     workout_json = compact_workout_json(workout_json, max_chars)
 
@@ -210,10 +218,11 @@ def _build_openai_messages(
     user_parts.append("Workout data (lossless FIT JSON):\n```json\n" + workout_json + "\n```")
     user_parts.append("Athlete's request:\n" + prompt)
 
-    return [
+    messages: "List[ChatCompletionMessageParam]" = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": "\n\n".join(user_parts)},
     ]
+    return messages
 
 
 def stream_openai_compatible(

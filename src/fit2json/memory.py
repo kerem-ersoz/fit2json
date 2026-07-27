@@ -62,7 +62,25 @@ def _session_metrics(activity: DecodedActivity) -> Dict[str, Any]:
         "total_calories": pick("total_calories"),
         "ascent_m": pick("total_ascent"),
     }
-    return {k: v for k, v in metrics.items() if v is not None}
+    metrics = {k: v for k, v in metrics.items() if v is not None}
+    if metrics:
+        return metrics
+
+    # Legacy 0.1 compact schema: derive headline metrics from the top-level summary.
+    summary = getattr(activity, "summary_hint", None) or {}
+    if summary:
+        dist_km = summary.get("total_distance_km")
+        legacy = {
+            "distance_m": dist_km * 1000 if isinstance(dist_km, (int, float)) else None,
+            "duration_s": summary.get("total_duration_s"),
+            "avg_hr": summary.get("avg_heart_rate_bpm"),
+            "max_hr": summary.get("max_heart_rate_bpm"),
+            "avg_power_w": summary.get("avg_power_w"),
+            "total_calories": summary.get("total_calories"),
+            "ascent_m": summary.get("total_ascent_m"),
+        }
+        metrics = {k: v for k, v in legacy.items() if v is not None}
+    return metrics
 
 
 def activity_id(activity: DecodedActivity) -> str:
