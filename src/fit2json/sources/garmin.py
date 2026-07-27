@@ -210,10 +210,12 @@ def fetch_garmin_activities(
     skipped = 0
     for act in activities:
         activity_id = act.get("activityId")
+        if activity_id is None:
+            continue
         activity_name = act.get("activityName", "activity")
         start = act.get("startTimeLocal", "unknown")
 
-        if activity_id is not None and _already_downloaded(save_dir, activity_id):
+        if _already_downloaded(save_dir, activity_id):
             skipped += 1
             continue
 
