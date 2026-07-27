@@ -270,3 +270,42 @@ def test_fetch_garmin_stores(empty_client, monkeypatch):
 
 def test_fetch_unknown_platform(empty_client):
     assert empty_client.post("/api/fetch/nope", json={"days": 7}).status_code == 404
+
+
+def test_legacy_0_1_format_shim():
+    """fit2json 0.1 'compact' activities (summary/time_series) still populate the UI."""
+    from fit2json.memory import _session_metrics
+    from fit2json.web import services
+
+    legacy = {
+        "metadata": {"tool_version": "0.1.0"},
+        "activities": [
+            {
+                "source_file": "2024-01-02_09-00-00_555444333.fit",
+                "sport": "walking",
+                "start_time": "2024-01-02T09:00:00+00:00",
+                "summary": {
+                    "total_distance_km": 4.0,
+                    "total_duration_s": 2400,
+                    "avg_heart_rate_bpm": 110,
+                    "total_calories": 250,
+                    "total_ascent_m": 30,
+                },
+                "laps": [
+                    {"lap_number": 1, "distance_km": 4.0, "duration_s": 2400, "avg_heart_rate_bpm": 110}
+                ],
+                "time_series_1min": [{"elapsed_min": 0, "heart_rate_bpm": 100}],
+            }
+        ],
+    }
+    acts = services.decoded_from_obj(legacy)
+    assert len(acts) == 1
+    act = acts[0]
+    assert act.sport == "walking"
+    assert (act.start_time or "").startswith("2024-01-02")
+    metrics = _session_metrics(act)
+    assert metrics["distance_m"] == 4000.0
+    assert metrics["duration_s"] == 2400
+    assert metrics["avg_hr"] == 110
+    assert round(metrics["avg_speed_mps"], 4) == round(4000.0 / 2400, 4)
+    assert len(act.messages.get("lap") or []) == 1

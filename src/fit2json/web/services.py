@@ -30,6 +30,99 @@ def _read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+# ── format compatibility (fit2json 0.1 "compact" ↔ 0.2 "lossless") ───────────────
+
+
+def _is_legacy_activity(a: Any) -> bool:
+    """True for a fit2json 0.1 compact activity (summary/time_series, no messages)."""
+    return isinstance(a, dict) and "messages" not in a and (
+        "summary" in a or "time_series_1min" in a
+    )
+
+
+def _legacy_to_decoded(a: Dict[str, Any]) -> DecodedActivity:
+    """Adapt a 0.1 compact activity into a DecodedActivity (synthetic session + laps).
+
+    The 0.1 format stored a rolled-up ``summary`` + 1-minute ``time_series`` rather than
+    the lossless per-message tree, so we rebuild just enough (session + laps) for the UI's
+    headline metrics. There's no GPS/per-second data at this fidelity.
+    """
+    summary = a.get("summary") or {}
+    session: Dict[str, Any] = {}
+    if a.get("sport"):
+        session["sport"] = a["sport"]
+    if a.get("start_time"):
+        session["start_time"] = a["start_time"]
+
+    def put(key: str, value: Any, mul: float = 1.0) -> None:
+        if isinstance(value, (int, float)):
+            session[key] = value * mul
+
+    dist_km = summary.get("total_distance_km")
+    dur_s = summary.get("total_duration_s")
+    put("total_distance", dist_km, 1000.0)
+    put("total_timer_time", dur_s)
+    put("avg_heart_rate", summary.get("avg_heart_rate_bpm"))
+    put("max_heart_rate", summary.get("max_heart_rate_bpm"))
+    put("avg_cadence", summary.get("avg_cadence_spm"))
+    put("total_calories", summary.get("total_calories"))
+    put("total_ascent", summary.get("total_ascent_m"))
+    put("total_descent", summary.get("total_descent_m"))
+    if isinstance(dist_km, (int, float)) and isinstance(dur_s, (int, float)) and dur_s > 0:
+        session["avg_speed"] = dist_km * 1000.0 / dur_s
+
+    messages: Dict[str, List[Dict[str, Any]]] = {"session": [session]} if session else {}
+
+    laps = a.get("laps")
+    if isinstance(laps, list) and laps:
+        lap_msgs: List[Dict[str, Any]] = []
+        for lap in laps:
+            if not isinstance(lap, dict):
+                continue
+            lm: Dict[str, Any] = {}
+            ld = lap.get("distance_km")
+            lt = lap.get("duration_s")
+            if isinstance(ld, (int, float)):
+                lm["total_distance"] = ld * 1000.0
+            if isinstance(lt, (int, float)):
+                lm["total_timer_time"] = lt
+            if isinstance(lap.get("avg_heart_rate_bpm"), (int, float)):
+                lm["avg_heart_rate"] = lap["avg_heart_rate_bpm"]
+            if isinstance(lap.get("max_heart_rate_bpm"), (int, float)):
+                lm["max_heart_rate"] = lap["max_heart_rate_bpm"]
+            if isinstance(lap.get("avg_cadence_spm"), (int, float)):
+                lm["avg_cadence"] = lap["avg_cadence_spm"]
+            if isinstance(ld, (int, float)) and isinstance(lt, (int, float)) and lt > 0:
+                lm["enhanced_avg_speed"] = ld * 1000.0 / lt
+            lap_msgs.append(lm)
+        if lap_msgs:
+            messages["lap"] = lap_msgs
+
+    field_units = {
+        "total_distance": "m", "total_timer_time": "s", "avg_heart_rate": "bpm",
+        "max_heart_rate": "bpm", "avg_cadence": "spm", "total_calories": "kcal",
+        "total_ascent": "m", "total_descent": "m", "avg_speed": "m/s",
+        "enhanced_avg_speed": "m/s",
+    }
+    return DecodedActivity(
+        source_file=a.get("source_file", "unknown"), messages=messages, field_units=field_units
+    )
+
+
+def decoded_from_obj(data: Any) -> List[DecodedActivity]:
+    """Decode a workout JSON object to activities, tolerant of 0.1 and 0.2 formats."""
+    if isinstance(data, dict) and "activities" in data:
+        items = data.get("activities") or []
+    elif isinstance(data, dict):
+        items = [data]
+    else:
+        items = []
+    out: List[DecodedActivity] = []
+    for a in items:
+        out.append(_legacy_to_decoded(a) if _is_legacy_activity(a) else DecodedActivity.from_dict(a))
+    return out
+
+
 def derive_source_ref(source: Optional[str], source_file: str) -> Optional[Dict[str, str]]:
     """Best-effort deep link to the original activity on Garmin Connect / Strava.
 
@@ -114,7 +207,7 @@ class Library:
             source = None
             if isinstance(data, dict):
                 source = (data.get("metadata") or {}).get("source")
-            for i, act in enumerate(activities_from_obj(data)):
+            for i, act in enumerate(decoded_from_obj(data)):
                 aid = activity_filename(act, i)
                 if aid in locator:  # disambiguate rare id collisions deterministically
                     n = 1
@@ -154,7 +247,7 @@ class Library:
         if loc is None:
             return None
         try:
-            acts = activities_from_obj(_read_json(loc.path))
+            acts = decoded_from_obj(_read_json(loc.path))
         except Exception:
             return None
         return acts[loc.index] if loc.index < len(acts) else None
@@ -268,7 +361,12 @@ def list_analyses(activity_id: str) -> Optional[List[Dict[str, Any]]]:
         return None
     store = _memory_store()
     aid = memory_activity_id(act)
-    entries = [e for e in store.load_index() if e.get("activity_id") == aid]
+    src = act.source_file
+    # Match by source_file (stable across formats) or the derived memory id.
+    entries = [
+        e for e in store.load_index()
+        if e.get("source_file") == src or e.get("activity_id") == aid
+    ]
     entries.sort(key=lambda e: e.get("created_at") or "", reverse=True)
     return [_entry_view(store, e, with_body=True) for e in entries]
 
