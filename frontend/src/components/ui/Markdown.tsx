@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Components } from 'react-markdown'
@@ -5,20 +6,20 @@ import type { Components } from 'react-markdown'
 /**
  * Languages reserved for LLM-authored visuals on the analysis page.
  *
- * Roadmap: the analysis prompt will invite the model to emit bespoke charts
- * (e.g. HR-vs-pace scatter, HR drift, zone distribution, week-over-week trends)
- * as fenced ```fitsift-chart / ```vega-lite blocks. The `pre` override below is
- * the single drop-in point — swap ChartPlaceholder for a real renderer
- * (e.g. Vega-Lite via react-vega) and nothing else needs to change.
+ * The analysis prompt invites the model to emit bespoke charts (HR-vs-pace
+ * scatter, HR/pace decoupling, time-in-zone, week-over-week load) as fenced
+ * ```fitsift-chart / ```vega-lite blocks containing a Vega-Lite spec. The `pre`
+ * override routes those to a lazily-loaded Vega renderer; everything else is
+ * normal markdown.
  */
 const CHART_LANGUAGES = new Set(['fitsift-chart', 'vega-lite', 'vegalite'])
 
-function ChartPlaceholder({ lang }: { lang: string; spec: string }) {
-  return (
-    <div className="my-3 rounded-lg border border-dashed border-brand-300 bg-brand-50/60 p-3 text-xs font-medium text-brand-700">
-      Visual ({lang}) — chart rendering coming soon.
-    </div>
-  )
+const ChartBlock = lazy(() => import('../../features/activities/ChartBlock'))
+
+function codeText(children: unknown): string {
+  if (Array.isArray(children)) return children.map(codeText).join('')
+  if (children == null) return ''
+  return String(children)
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -28,7 +29,12 @@ const components: Components = {
     const className: string = child?.props?.className || ''
     const lang = /language-([\w-]+)/.exec(className)?.[1]
     if (lang && CHART_LANGUAGES.has(lang)) {
-      return <ChartPlaceholder lang={lang} spec={String(child?.props?.children ?? '')} />
+      const spec = codeText(child?.props?.children)
+      return (
+        <Suspense fallback={<div className="my-3 text-xs text-slate-400">Rendering chart…</div>}>
+          <ChartBlock spec={spec} />
+        </Suspense>
+      )
     }
     return <pre>{children}</pre>
   },

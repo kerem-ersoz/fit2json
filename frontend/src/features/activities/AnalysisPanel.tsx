@@ -10,8 +10,8 @@ import { formatDateTime } from '../../lib/format'
 const SUGGESTIONS = [
   "Give me a coach's summary of this workout.",
   'Analyze my pacing and heart-rate strategy.',
+  'Chart my time in each heart-rate zone.',
   'Any signs of fatigue or overreaching here?',
-  'How does this compare with my recent training?',
 ]
 
 function backendOptions(copilot: boolean) {

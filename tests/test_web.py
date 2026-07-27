@@ -151,3 +151,45 @@ def test_analyze_streams_and_saves(client, monkeypatch):
 def test_analyze_missing_activity(client):
     r = client.post("/api/analyze", json={"activity_id": "nope", "prompt": "hi"})
     assert r.status_code == 404
+
+
+def test_analyze_appends_chart_guidance(client, monkeypatch):
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+    captured: dict = {}
+
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None):
+        captured["prompt"] = prompt
+        yield "ok"
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+
+    aid = client.get("/api/activities").json()[0]["id"]
+    r = client.post("/api/analyze", json={"activity_id": aid, "prompt": "Summarize"})
+    assert r.status_code == 200
+    # Chart guidance is appended to the model's prompt by default…
+    assert "fitsift-chart" in captured["prompt"]
+    # …but memory keeps the athlete's original prompt.
+    analyses = client.get(f"/api/activities/{aid}/analyses").json()["analyses"]
+    assert analyses[0]["prompt"] == "Summarize"
+
+
+def test_analyze_charts_can_be_disabled(client, monkeypatch):
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+    captured: dict = {}
+
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None):
+        captured["prompt"] = prompt
+        yield "ok"
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+
+    aid = client.get("/api/activities").json()[0]["id"]
+    r = client.post(
+        "/api/analyze", json={"activity_id": aid, "prompt": "Summarize", "charts": False}
+    )
+    assert r.status_code == 200
+    assert "fitsift-chart" not in captured["prompt"]

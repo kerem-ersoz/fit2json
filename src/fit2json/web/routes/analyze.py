@@ -38,6 +38,11 @@ def analyze(req: AnalyzeRequest):
 
     resolved = analyzer.resolve_backend(req.backend, None)
 
+    # The model gets chart guidance appended (web only); memory keeps the original prompt.
+    effective_prompt = req.prompt
+    if req.charts:
+        effective_prompt = req.prompt + analyzer.CHART_INSTRUCTIONS
+
     store = None
     if not req.no_memory:
         store = MemoryStore(get_settings().memory_dir)
@@ -46,7 +51,7 @@ def analyze(req: AnalyzeRequest):
     def build_stream() -> Iterator[str]:
         if resolved == "copilot":
             return analyzer.stream_copilot(
-                prompt=req.prompt,
+                prompt=effective_prompt,
                 workout_paths=[path],
                 memory_dir=(store.root if store else None),
                 model=req.model,
@@ -61,7 +66,7 @@ def analyze(req: AnalyzeRequest):
                 )
                 digest = store.digest(entries)
             return analyzer.stream_openai_compatible(
-                prompt=req.prompt,
+                prompt=effective_prompt,
                 workout_json=workout_json,
                 base_url=url,
                 api_key=key,

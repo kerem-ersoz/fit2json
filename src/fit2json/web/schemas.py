@@ -43,3 +43,4 @@ class AnalyzeRequest(BaseModel):
     recall_days: Optional[int] = None
     recall_limit: int = 8
     no_memory: bool = False
+    charts: bool = True

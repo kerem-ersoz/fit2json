@@ -30,6 +30,25 @@ SYSTEM_PROMPT = (
     "comment on progress and trends over time. Use markdown for readability."
 )
 
+# Appended to the prompt (web UI only) to let the model draw bespoke, insightful charts
+# instead of the basic graphs Garmin/Strava already show. Rendered client-side as Vega-Lite.
+CHART_INSTRUCTIONS = (
+    "\n\n---\n"
+    "You may include up to 2 custom charts, but ONLY when they add genuine insight beyond "
+    "the basic graphs the athlete already sees on Garmin/Strava — e.g. HR-vs-pace scatter, "
+    "HR/pace decoupling over time, time-in-zone distribution, or week-over-week load from "
+    "memory. To draw one, output a fenced code block whose info string is exactly "
+    "`fitsift-chart`, containing a single valid Vega-Lite v5 JSON spec with the data inlined "
+    "under `data.values`. Keep each spec small (aggregate or downsample to <=120 rows) and do "
+    "NOT set `width` or `height`. Every chart must be grounded in this workout's actual "
+    "numbers. Example:\n"
+    "```fitsift-chart\n"
+    '{"mark":"bar","data":{"values":[{"zone":"Z2","minutes":22},{"zone":"Z3","minutes":15}]},'
+    '"encoding":{"x":{"field":"zone","type":"nominal"},"y":{"field":"minutes","type":"quantitative"}}}\n'
+    "```\n"
+    "Write the rest of your analysis as normal markdown around the chart(s)."
+)
+
 # Local OpenAI-compatible backends: (base_url, default api key)
 LOCAL_BACKENDS = {
     "ollama": ("http://localhost:11434/v1", "ollama"),
