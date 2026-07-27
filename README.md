@@ -1,168 +1,70 @@
 # fit2json
 
-Convert Garmin Connect and Strava `.fit` files into structured, LLM-ready JSON — then analyze your workouts with AI.
+Pull your workouts from Garmin Connect or Strava, store them as **faithful, lossless JSON**, and **analyze them with an LLM** — GitHub Copilot CLI or a local model (Ollama / LM Studio) — using your own prompt. Every analysis is saved to a **training-memory corpus** so the model can revisit past workouts and reason about your progress over time.
 
 ## What It Does
 
-**fit2json** is a command-line tool that:
+**fit2json** is a command-line harness with three stages:
 
-1. **Parses** `.fit` files (the binary format used by Garmin, Wahoo, and other fitness devices)
-2. **Converts** them to compact, structured JSON optimized for LLM context windows
-3. **Fetches** activities directly from Garmin Connect or Strava APIs
-4. **Analyzes** your workout data using AI — supports **OpenAI**, **Ollama** (local), and any OpenAI-compatible API
+1. **Fetch / convert** — decode `.fit` files (Garmin, Wahoo, etc.) losslessly, or pull recent activities straight from Garmin Connect / Strava.
+2. **Store** — write a **complete, human-readable** JSON dump: every FIT message and every field, at native resolution. Nothing is downsampled or dropped.
+3. **Analyze** — send a workout (plus your custom prompt) to the **GitHub Copilot CLI** or a **local LLM**, and keep the result in a searchable memory corpus for trend analysis.
 
-The output JSON includes activity summaries, lap splits, and 1-minute time-series samples (heart rate, cadence, speed, power) — detailed enough for meaningful AI analysis while staying compact enough to fit in an LLM prompt.
+> **What changed in 0.2:** older versions produced a compact, lossy "LLM-ready" JSON and called the OpenAI/GitHub Models API directly. Capable models no longer need pre-digested data, so fit2json now keeps a **lossless** archive and **orchestrates** analysis through Copilot / local models instead. See [Migrating from 0.1](#migrating-from-01).
 
 ---
 
 ## Installation
 
-### Option 1: Docker (Recommended — no Python required)
+### Option 1: Docker (no Python required)
 
 ```bash
 docker pull ghcr.io/kerem-ersoz/fit2json:latest
-
-# Verify
 docker run --rm ghcr.io/kerem-ersoz/fit2json --version
 ```
 
+> The Docker image covers `convert` and `fetch`. The `analyze` command's `copilot` backend needs the Copilot CLI on the host, so run analysis outside the container (or point `--base-url` at a reachable local LLM). See [Docker usage](#docker-usage).
+
 ### Option 2: Install from source
 
-### Prerequisites
-
-- Python 3.9 or later
-- An API key for your preferred LLM provider (for the `analyze` command):
-  - **OpenAI API** (recommended) — set `OPENAI_API_KEY`
-  - **Ollama** (free, local) — no key needed, just have Ollama running
-  - **GitHub Models** — set `GITHUB_TOKEN` (rate-limited on free tier)
-
-### Install from source
+Requires **Python 3.9+**.
 
 ```bash
 git clone https://github.com/kerem-ersoz/fit2json.git
 cd fit2json
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e .
-```
-
-### Install dev dependencies (for running tests)
-
-```bash
-pip install -e ".[dev]"
-```
-
-### Verify installation
-
-```bash
+pip install -e .            # add ".[dev]" for tests
 fit2json --version
-# fit2json, version 0.1.0
 ```
+
+### For the `analyze` command
+
+Pick whichever backend you like — no API key required for any of these:
+
+- **GitHub Copilot CLI** — install the [`copilot` CLI](https://github.com/github/copilot-cli) and sign in. Auto-detected if on your `PATH`.
+- **Ollama** — [ollama.com](https://ollama.com), then `ollama pull llama3.1`.
+- **LM Studio** — [lmstudio.ai](https://lmstudio.ai); start its local server and load a model.
 
 ---
 
 ## Quick Start
 
 ```bash
-# Convert a single .fit file
+# Convert a single .fit file to lossless JSON (stdout)
 fit2json convert my_run.fit -o run.json
 
-# Convert a whole directory of .fit files
-fit2json convert ~/Downloads/garmin-export/ -o all-activities.json
+# Convert a folder of .fit files → one JSON file per activity, into ./workouts/
+fit2json convert ~/Downloads/garmin-export/ -o workouts/
 
-# Fetch from Garmin Connect and convert
-fit2json fetch garmin --days 7 -o this-week.json
+# Pull the last 7 days from Garmin → ./workouts/
+fit2json fetch garmin --days 7 -o workouts/
 
-# Analyze with AI
-fit2json analyze run.json --prompt "How was my pacing strategy?"
+# Analyze one workout with your prompt (auto-detects Copilot CLI, else Ollama)
+fit2json analyze run.json -p "How was my pacing strategy?"
 
-# Pipeline: convert and analyze in one shot
-fit2json convert my_run.fit | fit2json analyze --prompt "Give me a race report"
-```
-
----
-
-## Docker Usage
-
-The Docker image lets you run fit2json on any platform without installing Python. The container's working directory is `/data`.
-
-### Convert local .fit files
-
-Mount your `.fit` files into the container:
-
-```bash
-# Single file
-docker run --rm -v "$(pwd)":/data ghcr.io/kerem-ersoz/fit2json convert /data/my_run.fit -o /data/output.json
-
-# Entire directory
-docker run --rm -v ~/Downloads/garmin-export:/data ghcr.io/kerem-ersoz/fit2json convert /data/ -o /data/all-activities.json
-
-# Output to stdout (pipe-friendly)
-docker run --rm -v "$(pwd)":/data ghcr.io/kerem-ersoz/fit2json convert /data/my_run.fit
-```
-
-### Fetch from Garmin Connect
-
-Pass credentials via environment variables:
-
-```bash
-docker run --rm \
-  -e GARMIN_EMAIL=you@email.com \
-  -e GARMIN_PASSWORD=yourpassword \
-  -v "$(pwd)":/data \
-  ghcr.io/kerem-ersoz/fit2json fetch garmin --days 7 -o /data/this-week.json
-```
-
-### Fetch from Strava
-
-```bash
-docker run --rm \
-  -e STRAVA_CLIENT_ID=your_id \
-  -e STRAVA_CLIENT_SECRET=your_secret \
-  -e STRAVA_REFRESH_TOKEN=your_token \
-  -v "$(pwd)":/data \
-  ghcr.io/kerem-ersoz/fit2json fetch strava --days 30 -o /data/recent.json
-```
-
-### Analyze with AI
-
-```bash
-# With OpenAI
-docker run --rm \
-  -e OPENAI_API_KEY=sk-your_key \
-  -v "$(pwd)":/data \
-  ghcr.io/kerem-ersoz/fit2json analyze /data/output.json --prompt "How was my pacing?"
-
-# With Ollama (running on host)
-docker run --rm \
-  --network host \
-  -v "$(pwd)":/data \
-  ghcr.io/kerem-ersoz/fit2json analyze /data/output.json --provider ollama --prompt "Analyze this run"
-```
-
-### Pipeline: convert + analyze
-
-```bash
-docker run --rm -v "$(pwd)":/data ghcr.io/kerem-ersoz/fit2json convert /data/my_run.fit \
-  | docker run --rm -i -e OPENAI_API_KEY=sk-your_key ghcr.io/kerem-ersoz/fit2json analyze --prompt "Race report"
-```
-
-### Using a .env file
-
-```bash
-docker run --rm --env-file .env -v "$(pwd)":/data ghcr.io/kerem-ersoz/fit2json fetch garmin --days 7 -o /data/week.json
-```
-
-### Shell alias (optional)
-
-Add to your `~/.bashrc` or `~/.zshrc` for convenience:
-
-```bash
-alias fit2json='docker run --rm --env-file ~/.fit2json.env -v "$(pwd)":/data ghcr.io/kerem-ersoz/fit2json'
-
-# Then use normally:
-fit2json convert my_run.fit -o output.json
-fit2json analyze output.json --prompt "How was my run?"
+# Analyze against a local model and build up training memory over time
+fit2json analyze workouts/ -p "How is my fitness trending?" --backend ollama
 ```
 
 ---
@@ -281,442 +183,259 @@ All scripts honor these environment variables (defaults shown):
 
 ### `fit2json convert`
 
-Parse local `.fit` file(s) and output structured JSON.
+Decode local `.fit` file(s) into lossless JSON.
 
 ```bash
-# Single file → stdout
-fit2json convert activity.fit
-
-# Single file → file
-fit2json convert activity.fit -o output.json
-
-# Directory (batch) → file
-fit2json convert ./garmin-export/ -o all-activities.json
-
-# Custom indentation
-fit2json convert activity.fit -o output.json --indent 4
+fit2json convert activity.fit                     # → stdout
+fit2json convert activity.fit -o out.json         # → single combined file
+fit2json convert ./export/ -o workouts/           # → one file per activity
+fit2json convert ./export/ -o workouts/ --gzip    # → .json.gz (≈25× smaller)
 ```
-
-**Options:**
 
 | Option | Description |
 |--------|-------------|
-| `-o, --output PATH` | Output file path. Defaults to stdout. |
-| `--indent INT` | JSON indentation level (default: 2). |
-
----
+| `-o, --output PATH` | A `.json`/`.json.gz` file (combined) or a **directory** (one file per activity). Default: stdout. |
+| `--gzip` | Gzip the output. Recommended for archives — a long activity compresses to less than the original `.fit`. |
+| `--indent INT` | JSON indentation (default: 2). |
+| `--compact` | No indentation — smallest plain-text files. |
 
 ### `fit2json fetch garmin`
 
-Download and convert recent activities from Garmin Connect.
+Download and decode recent Garmin Connect activities.
 
 ```bash
-# Fetch last 30 days (default)
-fit2json fetch garmin -o recent.json
-
-# Fetch last 7 days
-fit2json fetch garmin --days 7 -o this-week.json
-
-# Keep raw .fit files
-fit2json fetch garmin --days 30 --raw-dir ./raw-fits/ -o activities.json
-
-# Explicit credentials (otherwise uses env vars)
-fit2json fetch garmin --email you@email.com --password yourpass -o activities.json
+fit2json fetch garmin --days 30 -o workouts/
+fit2json fetch garmin --days 7 --raw-dir ./raw-fits/ -o workouts/
 ```
-
-**Options:**
 
 | Option | Description |
 |--------|-------------|
 | `--days INT` | Days of history to fetch (default: 30). |
-| `-o, --output PATH` | Output JSON file path. |
-| `--email TEXT` | Garmin Connect email (or set `GARMIN_EMAIL`). |
-| `--password TEXT` | Garmin Connect password (or set `GARMIN_PASSWORD`). |
-| `--raw-dir PATH` | Directory to save raw `.fit` files (acts as a persistent archive — already-downloaded activities are skipped). |
-| `--json-dir PATH` | Directory to write one JSON file per new activity (named to match the raw `.fit`). |
-| `--token-dir PATH` | Garmin session token-cache directory (or set `GARMINTOKENS`; default `~/.garminconnect`). Reuses a saved session instead of logging in fresh each run. |
+| `-o, --output PATH` | Output directory (default: `./workouts/`, one file per activity) or a `.json` file. |
+| `--gzip` | Gzip the output. |
+| `--email` / `--password` | Garmin credentials (or `GARMIN_EMAIL` / `GARMIN_PASSWORD`). |
+| `--raw-dir PATH` | Keep the raw `.fit` files too (persistent archive — already-downloaded activities are skipped). |
+| `--token-dir PATH` | Garmin session token-cache dir (or set `GARMINTOKENS`; default `~/.garminconnect`). Reuses a saved session instead of logging in fresh each run. |
 
-> **Session reuse & incremental fetch:** the first run logs in with your credentials and
-> caches the session tokens in the token dir; later runs resume from that cache (no fresh
-> login, which avoids Garmin CAPTCHA / rate limiting). With a persistent `--raw-dir`, any
-> activity whose `.fit` already exists is skipped. Together these make frequent polling
-> cheap — see [Automatic / continuous export](#automatic--continuous-export-macos-docker--launchd).
-
----
+> **Session reuse & incremental fetch:** the first run logs in and caches the session tokens
+> in the token dir; later runs resume from that cache (no fresh login, which avoids Garmin
+> CAPTCHA / rate limiting). With a persistent `--raw-dir`, any activity whose `.fit` already
+> exists is skipped, and `-o <dir>` writes one JSON per new activity — so frequent polling
+> stays cheap. See [Automatic / continuous export](#automatic--continuous-export-macos-docker--launchd).
 
 ### `fit2json fetch strava`
 
-Download and convert recent activities from Strava.
+Download and decode recent Strava activities.
 
-> **Note:** Strava's API provides stream data (time-series), not raw `.fit` files. The tool fetches streams and converts them to the same JSON format. For actual `.fit` files, use [Strava's bulk export](https://support.strava.com/hc/en-us/articles/216918437-Exporting-your-Data-and-Bulk-Export) and the `convert` command.
+> **Lower fidelity:** Strava's API returns processed time-series *streams*, not raw `.fit` files, so this path **cannot be truly lossless**. For full fidelity, use Strava's [bulk export](https://support.strava.com/hc/en-us/articles/216918437) and `fit2json convert` on the `.fit` files.
 
 ```bash
-# Fetch last 30 days
-fit2json fetch strava -o recent.json
-
-# Fetch last 90 days
-fit2json fetch strava --days 90 -o quarter.json
+fit2json fetch strava --days 30 -o workouts/
 ```
 
-**Options:**
-
-| Option | Description |
-|--------|-------------|
-| `--days INT` | Days of history to fetch (default: 30). |
-| `-o, --output PATH` | Output JSON file path. |
-| `--client-id TEXT` | Strava client ID (or set `STRAVA_CLIENT_ID`). |
-| `--client-secret TEXT` | Strava client secret (or set `STRAVA_CLIENT_SECRET`). |
-| `--refresh-token TEXT` | Strava refresh token (or set `STRAVA_REFRESH_TOKEN`). |
-| `--raw-dir PATH` | Directory to save raw activity files. |
-
----
+Options mirror `fetch garmin`, with `--client-id` / `--client-secret` / `--refresh-token` (or the matching `STRAVA_*` env vars).
 
 ### `fit2json analyze`
 
-Send activity JSON to an LLM for AI-powered analysis. Supports multiple providers.
-
-**Provider auto-detection:** If `OPENAI_API_KEY` is set → uses OpenAI. If `GITHUB_TOKEN` is set → uses GitHub Models. Otherwise → tries Ollama on localhost.
+Send a workout (and your prompt) to an LLM backend, using and updating training memory.
 
 ```bash
-# Analyze with OpenAI (auto-detected from OPENAI_API_KEY)
-fit2json analyze output.json --prompt "How is my running fitness trending?"
+# Auto-detect backend (Copilot CLI if installed, else Ollama)
+fit2json analyze run.json -p "Write a race report"
 
-# Explicitly choose OpenAI with a specific model
-fit2json analyze output.json --provider openai --model gpt-4.1 --prompt "Race report"
+# Explicit backends
+fit2json analyze run.json -p "Analyze my HR zones" --backend ollama --model llama3.1
+fit2json analyze run.json -p "Any red flags?"       --backend lmstudio
+fit2json analyze run.json -p "Coach me"             --backend copilot --model auto
 
-# Use Ollama (local, free)
-fit2json analyze output.json --provider ollama --model llama3.1 --prompt "Analyze my HR zones"
+# Any OpenAI-compatible endpoint
+fit2json analyze run.json -p "Summarize" --base-url http://my-server:8080/v1
 
-# Use any OpenAI-compatible endpoint
-fit2json analyze output.json --base-url http://my-server:8080/v1 --prompt "Summarize"
-
-# Deep analysis: each activity analyzed individually, then synthesized
-fit2json analyze output.json --deep --prompt "Comprehensive fitness overview"
-
-# Pipe from convert
-fit2json convert activity.fit | fit2json analyze --prompt "Give me a race report"
+# A whole directory of workouts, or piped from convert
+fit2json analyze workouts/ -p "Summarize my training week"
+fit2json convert run.fit | fit2json analyze -p "Race report"
 ```
-
-**Options:**
 
 | Option | Description |
 |--------|-------------|
-| `-p, --prompt TEXT` | **(Required)** Your analysis question or prompt. |
-| `--model TEXT` | Model name (e.g. `gpt-4.1`, `llama3.1`). Provider-specific defaults. |
-| `--provider` | `openai`, `ollama`, or `github`. Auto-detected if omitted. |
-| `--base-url TEXT` | Custom OpenAI-compatible API base URL. |
-| `--api-key TEXT` | API key (or set `OPENAI_API_KEY` / `GITHUB_TOKEN`). |
-| `--deep` | Multi-pass: analyze each activity individually, then synthesize. |
-| `--fast-model TEXT` | Model for per-activity pass in `--deep` mode (default: auto). |
-| `--max-chars INT` | Max input chars for context window (default: 100K). |
+| `SOURCE` | Workout JSON file or directory. Omit to read JSON from stdin. |
+| `-p, --prompt TEXT` | **(Required)** Your analysis question. |
+| `--backend` | `copilot`, `ollama`, or `lmstudio`. Auto-detected if omitted. |
+| `--base-url TEXT` | Any OpenAI-compatible endpoint (overrides `--backend`). |
+| `--model TEXT` | Model name (backend-specific; local backends auto-pick if omitted). |
+| `--api-key TEXT` | Only for a custom `--base-url` that requires auth. |
 | `--no-stream` | Disable streaming output. |
+| `--max-chars INT` | Max workout JSON chars inlined for local models (default: 200K). Large activities are auto-thinned to fit. |
+| `--memory PATH` | Memory corpus location (default: `./fit2json-memory/`). |
+| `--no-memory` | Don't read or write memory for this run. |
+| `--recall {auto,same-sport,all,none}` | Which past analyses to recall as context (default: `auto`). |
+| `--recall-days INT` | Only recall memories within N days. |
+| `--recall-limit INT` | Max memories to recall (default: 8). |
+
+**How backends handle data:**
+
+- **`copilot`** — the workout file(s) and the memory directory are passed **by path**; Copilot reads them with its own file tools, so even huge lossless files fit fine.
+- **`ollama` / `lmstudio` / `--base-url`** — the workout JSON is inlined and automatically **thinned** to fit `--max-chars`; recalled memories are added as a compact digest.
+
+### `fit2json memory`
+
+Inspect the training-memory corpus.
+
+```bash
+fit2json memory path                       # print the corpus location
+fit2json memory list                       # list all analyses, newest first
+fit2json memory list --sport running --days 30
+fit2json memory show <entry_id>            # print one saved analysis
+```
 
 ---
 
-## JSON Output Schema
+## Training memory
 
-The output JSON is designed to be compact yet informative for LLM analysis:
+Every `analyze` run saves its result to a filesystem corpus (default `./fit2json-memory/`):
+
+```
+fit2json-memory/
+├── running/
+│   └── 2024-03-10T0730-00Z_2024-03-10_run_3195e283.md
+├── cycling/
+│   └── 2024-03-12T1800-00Z_2024-03-12_ride_982710f5.md
+└── index.jsonl
+```
+
+- Each analysis is a Markdown file with a front-matter block (date, sport, key metrics, prompt, model) followed by the AI's write-up — readable on its own or by any LLM.
+- `index.jsonl` is a one-line-per-analysis index for fast filtering by sport and date.
+- Files are partitioned by sport and date-prefixed, so you can revisit **memories from different activity types and time ranges**.
+- On each run, fit2json **recalls** the relevant past analyses (see `--recall*`) and feeds them back as context so the model can comment on progress and trends. With the `copilot` backend, Copilot browses the corpus directly with its file tools.
+
+---
+
+## Lossless JSON schema
+
+The output is a faithful decode of the `.fit` file — every message type, every field, at native resolution:
 
 ```json
 {
+  "metadata": { "generated_at": "…", "tool_version": "0.2.0", "source": "local", "schema": "lossless-fit" },
   "activities": [
     {
-      "source_file": "2024-03-10_morning_run.fit",
+      "source_file": "2024-03-10_run.fit",
       "sport": "running",
       "start_time": "2024-03-10T07:30:00+00:00",
-      "summary": {
-        "total_distance_km": 10.234,
-        "total_duration_s": 3120.0,
-        "avg_pace_min_per_km": 5.1,
-        "max_pace_min_per_km": 4.32,
-        "avg_heart_rate_bpm": 152,
-        "max_heart_rate_bpm": 178,
-        "avg_cadence_spm": 172,
-        "avg_speed_kmh": 11.81,
-        "max_speed_kmh": 13.89,
-        "total_calories": 680,
-        "total_ascent_m": 85.0,
-        "total_descent_m": 82.0
-      },
-      "laps": [
-        {
-          "lap_number": 1,
-          "distance_km": 1.001,
-          "duration_s": 305.0,
-          "avg_heart_rate_bpm": 145,
-          "max_heart_rate_bpm": 155,
-          "avg_pace_min_per_km": 5.08,
-          "avg_speed_kmh": 11.81,
-          "avg_cadence_spm": 170
-        }
-      ],
-      "time_series_1min": [
-        {
-          "elapsed_min": 0,
-          "heart_rate_bpm": 120,
-          "cadence_spm": 168,
-          "speed_kmh": 10.5
-        },
-        {
-          "elapsed_min": 1,
-          "heart_rate_bpm": 142,
-          "cadence_spm": 172,
-          "speed_kmh": 11.2
-        }
-      ]
+      "message_counts": { "record": 2809, "lap": 4, "session": 1, "event": 7 },
+      "field_units": { "distance": "m", "speed": "m/s", "heart_rate": "bpm" },
+      "messages": {
+        "session": [ { "sport": "running", "total_distance": 10234.0, "avg_heart_rate": 152, "…": "…" } ],
+        "lap": [ { "total_distance": 1001.0, "avg_heart_rate": 145, "…": "…" } ],
+        "record": [
+          { "timestamp": "2024-03-10T07:30:00+00:00", "heart_rate": 120, "cadence": 84, "speed": 2.9, "distance": 0.02 }
+        ]
+      }
     }
-  ],
-  "metadata": {
-    "generated_at": "2024-03-10T12:00:00+00:00",
-    "tool_version": "0.1.0",
-    "file_count": 1
-  }
+  ]
 }
 ```
 
-### Field Reference
+- **Messages** are grouped by FIT message name; order is preserved within each group and every record keeps its `timestamp`.
+- **Units** for each field are listed once in `field_units` to keep records readable.
+- **Developer / unknown fields** are preserved (named where the file defines them, otherwise `unknown_<n>`).
+- Values are decoded to human units (datetimes → ISO 8601, byte blobs → hex).
 
-#### Summary Fields
-
-| Field | Unit | Description |
-|-------|------|-------------|
-| `total_distance_km` | km | Total distance |
-| `total_duration_s` | seconds | Total moving time |
-| `avg_pace_min_per_km` | min/km | Average pace |
-| `max_pace_min_per_km` | min/km | Best (fastest) pace |
-| `avg_heart_rate_bpm` | bpm | Average heart rate |
-| `max_heart_rate_bpm` | bpm | Maximum heart rate |
-| `avg_cadence_spm` | steps/min | Average cadence (steps per minute for running) |
-| `max_cadence_spm` | steps/min | Maximum cadence |
-| `avg_power_w` | watts | Average power (cycling/running power meter) |
-| `max_power_w` | watts | Maximum power |
-| `avg_speed_kmh` | km/h | Average speed |
-| `max_speed_kmh` | km/h | Maximum speed |
-| `total_calories` | kcal | Total calories burned |
-| `total_ascent_m` | meters | Total elevation gain |
-| `total_descent_m` | meters | Total elevation loss |
-
-#### Time Series (1-minute samples)
-
-| Field | Unit | Description |
-|-------|------|-------------|
-| `elapsed_min` | minutes | Minutes since activity start |
-| `heart_rate_bpm` | bpm | Average HR for that minute |
-| `cadence_spm` | steps/min | Average cadence for that minute |
-| `speed_kmh` | km/h | Average speed for that minute |
-| `power_w` | watts | Average power for that minute |
-
-> **Note:** Fields with no data (e.g., `power_w` for a run without a power meter) are omitted from the JSON output to keep it compact.
+**File size:** a lossless dump is ~10× larger than the binary `.fit` (e.g. a 1 h ride ≈ 4 MB). Per-activity output keeps each file bounded, and `--gzip` shrinks it below the original `.fit`. For context-limited local models, `analyze` thins the data automatically.
 
 ---
 
-## Supported Activity Types
+## Docker usage
 
-| Sport | FIT Sport ID | Notes |
-|-------|-------------|-------|
-| Running | 1 | Includes treadmill |
-| Cycling | 2 | Road, MTB, indoor |
-| Swimming | 5 | Pool and open water |
-| Hiking | 11 | |
-| Walking | 13 | |
-| Rowing | 17 | Indoor and outdoor |
-| Yoga | 37 | |
-| Strength Training | 29 | |
-| Elliptical | 53 | |
-| Multi-sport | 15 | Triathlon, duathlon |
-| Other | Various | Falls back to `sport_N` naming |
+The container's working directory is `/data`. Mount your files in.
+
+```bash
+# Convert local .fit files
+docker run --rm -v "$(pwd)":/data ghcr.io/kerem-ersoz/fit2json convert /data/my_run.fit -o /data/workouts/
+
+# Fetch from Garmin
+docker run --rm \
+  -e GARMIN_EMAIL=you@email.com -e GARMIN_PASSWORD=yourpassword \
+  -v "$(pwd)":/data \
+  ghcr.io/kerem-ersoz/fit2json fetch garmin --days 7 -o /data/workouts/
+
+# Analyze against a local LLM running on the host (Ollama / LM Studio)
+docker run --rm --network host -v "$(pwd)":/data \
+  ghcr.io/kerem-ersoz/fit2json analyze /data/workouts/ --backend ollama -p "Weekly summary"
+```
+
+> The `copilot` backend isn't available inside the image — run `fit2json analyze … --backend copilot` from a host install instead.
 
 ---
 
 ## Configuration
 
-### Environment Variables
-
-Create a `.env` file in your project directory (see `.env.example`):
+Create a `.env` file (see `.env.example`); it's loaded automatically from the current directory.
 
 ```bash
-# For 'analyze' command — set ONE of these:
-OPENAI_API_KEY=sk-your_openai_key          # OpenAI (recommended)
-# GITHUB_TOKEN=ghp_your_github_token       # GitHub Models (rate-limited)
-# Or use --provider ollama for local models (no key needed)
-
-# Required for 'fetch garmin' command
-GARMIN_EMAIL=your@email.com
+GARMIN_EMAIL=your@email.com          # for `fetch garmin`
 GARMIN_PASSWORD=your_password
 
-# Required for 'fetch strava' command
-STRAVA_CLIENT_ID=your_client_id
+STRAVA_CLIENT_ID=your_client_id      # for `fetch strava`
 STRAVA_CLIENT_SECRET=your_client_secret
 STRAVA_REFRESH_TOKEN=your_refresh_token
 ```
 
-The tool automatically loads `.env` files from the current directory.
+The `analyze` command needs **no API key** for the Copilot CLI or local models. Only set `OPENAI_API_KEY` if you point `--base-url` at an OpenAI-compatible endpoint that requires auth.
+
+<details>
+<summary>Garmin Connect setup</summary>
+
+Use your normal Garmin Connect email/password (via env vars or `--email`/`--password`). Garmin may require 2FA/CAPTCHA for unfamiliar logins — sign in on the website first, or use **Activities → ⚙️ → Export Original** and `fit2json convert`.
+</details>
+
+<details>
+<summary>Strava API setup</summary>
+
+1. Create an app at [strava.com/settings/api](https://www.strava.com/settings/api) (callback `http://localhost`); note the Client ID and Secret.
+2. Authorize with `activity:read_all` scope and exchange the code for a **refresh token**:
+   ```bash
+   curl -X POST https://www.strava.com/oauth/token \
+     -d client_id=YOUR_ID -d client_secret=YOUR_SECRET \
+     -d code=AUTH_CODE -d grant_type=authorization_code
+   ```
+3. Set `STRAVA_CLIENT_ID` / `STRAVA_CLIENT_SECRET` / `STRAVA_REFRESH_TOKEN`.
+
+For full-fidelity data, prefer the bulk `.fit` export + `fit2json convert`.
+</details>
 
 ---
 
-## API Setup Guides
+## Supported activity types
 
-### OpenAI API (recommended for `analyze` command)
-
-1. **Get an API key** at [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
-2. **Set the key:**
-   ```bash
-   export OPENAI_API_KEY=sk-your_key_here
-   ```
-3. **Test it:**
-   ```bash
-   fit2json analyze output.json --prompt "Summarize this activity"
-   ```
-
-### Ollama (free, local — for `analyze` command)
-
-1. **Install Ollama** from [ollama.com](https://ollama.com)
-2. **Pull a model:**
-   ```bash
-   ollama pull llama3.1
-   ```
-3. **Use it:**
-   ```bash
-   fit2json analyze output.json --provider ollama --prompt "Analyze this run"
-   ```
-
-### GitHub Models API (alternative for `analyze` command)
-
-> ⚠️ Heavily rate-limited on free tier (~150 requests/window). Better for single-file analysis.
-
-1. Create a [Personal Access Token](https://github.com/settings/tokens) (no special scopes needed)
-2. Set it: `export GITHUB_TOKEN=ghp_your_token_here`
-
-### Garmin Connect (for `fetch garmin` command)
-
-1. **Use your existing Garmin Connect credentials** (the same email/password you use to log in to [connect.garmin.com](https://connect.garmin.com)).
-
-2. **Set credentials:**
-   ```bash
-   export GARMIN_EMAIL=your@email.com
-   export GARMIN_PASSWORD=your_password
-   # Or add to your .env file
-   ```
-
-3. **Alternative: Manual export**
-   - Log in to [Garmin Connect](https://connect.garmin.com)
-   - Go to Activities → select an activity → ⚙️ → Export Original
-   - Use `fit2json convert` on the downloaded `.fit` file
-
-### Strava API (for `fetch strava` command)
-
-1. **Create a Strava API Application:**
-   - Go to [Strava API Settings](https://www.strava.com/settings/api)
-   - Create an application (use `http://localhost` as the callback URL)
-   - Note your Client ID and Client Secret
-
-2. **Get a Refresh Token:**
-   - Visit: `https://www.strava.com/oauth/authorize?client_id=YOUR_CLIENT_ID&response_type=code&redirect_uri=http://localhost&scope=activity:read_all`
-   - Authorize the app → you'll be redirected to `http://localhost?code=AUTHORIZATION_CODE`
-   - Exchange the code:
-     ```bash
-     curl -X POST https://www.strava.com/oauth/token \
-       -d client_id=YOUR_CLIENT_ID \
-       -d client_secret=YOUR_CLIENT_SECRET \
-       -d code=AUTHORIZATION_CODE \
-       -d grant_type=authorization_code
-     ```
-   - Save the `refresh_token` from the response
-
-3. **Set credentials:**
-   ```bash
-   export STRAVA_CLIENT_ID=your_client_id
-   export STRAVA_CLIENT_SECRET=your_client_secret
-   export STRAVA_REFRESH_TOKEN=your_refresh_token
-   # Or add to your .env file
-   ```
-
-4. **Alternative: Bulk export**
-   - Go to [Strava Settings](https://www.strava.com/settings/profile) → "Download or Delete Your Account" → "Request Your Archive"
-   - Extract the `.fit` files from the archive
-   - Use `fit2json convert` on the extracted files
+Sport is read directly from the FIT `session` message (e.g. `running`, `cycling`, `swimming`, `hiking`, `walking`, `rowing`, `strength_training`, `multi_sport`, …). Unrecognized values fall back to `sport_<n>`. Because the schema is lossless, **all** sports and every field are preserved regardless of type.
 
 ---
 
-## Examples
+## Migrating from 0.1
 
-### Weekly training summary
-
-```bash
-fit2json fetch garmin --days 7 -o week.json
-fit2json analyze week.json --prompt "Give me a weekly training summary. How was my volume, intensity distribution, and recovery?"
-```
-
-### Race analysis
-
-```bash
-fit2json convert marathon.fit -o race.json
-fit2json analyze race.json --prompt "Analyze my marathon pacing strategy. Where did I slow down and why? What could I improve?"
-```
-
-### Trend analysis
-
-```bash
-fit2json fetch garmin --days 90 -o quarter.json
-fit2json analyze quarter.json --prompt "How has my running fitness changed over the last 3 months? Look at pace, heart rate, and cadence trends."
-```
-
-### Compare two workouts
-
-```bash
-fit2json convert interval_workout_1.fit interval_workout_2.fit -o compare.json
-fit2json analyze compare.json --prompt "Compare these two interval workouts. Did I improve?"
-```
+- **`convert` output is now lossless**, not the old compact summary/lap/1-min schema. Downstream code that read `summary`/`time_series_1min` should read the `messages` tree instead.
+- **`analyze` no longer calls the OpenAI or GitHub Models API directly.** Use `--backend copilot|ollama|lmstudio` or `--base-url`. `OPENAI_API_KEY`/`GITHUB_TOKEN` are no longer required.
+- **Removed:** the `--deep` multi-pass mode and its checkpointing (Copilot's large context + per-activity files make it unnecessary).
+- **`fetch`** now writes one JSON file per activity into a directory by default (`./workouts/`).
 
 ---
 
 ## Troubleshooting
 
-### "No .fit files found"
-Make sure you're pointing at a directory containing `.fit` files, or directly at a `.fit` file. The tool searches recursively in directories.
-
-### "Failed to parse [filename]"
-Some `.fit` files may be corrupted or use non-standard extensions. The tool will skip them and continue with the remaining files.
-
-### Garmin Connect authentication issues
-- Garmin may require 2FA or CAPTCHA for unfamiliar logins. Try logging in via the Garmin Connect website first.
-- If authentication fails repeatedly, use the manual export method.
-
-### Strava "Authorization Error"
-- Make sure your app has the `activity:read_all` scope.
-- Refresh tokens expire if unused for 6+ months — re-authorize if needed.
-
-### Large activities produce huge JSON
-The 1-minute sampling keeps output compact. A typical 1-hour activity produces ~5KB of JSON. For many activities, the `analyze` command automatically compacts data to fit the context window (default 100K chars). Use `--deep` for full per-activity analysis.
-
-### OpenAI API errors
-- Verify your key: `curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models`
-- Check your billing at [platform.openai.com/usage](https://platform.openai.com/usage)
-
-### Ollama connection refused
-- Make sure Ollama is running: `ollama serve`
-- Check it's on the default port: `curl http://localhost:11434/v1/models`
+- **"No .fit files found"** — point at a `.fit` file or a directory containing them (searched recursively).
+- **"copilot CLI was not found"** — install the Copilot CLI and sign in, or use `--backend ollama|lmstudio`.
+- **Ollama/LM Studio connection refused** — make sure the local server is running (`ollama serve`; LM Studio → *Local Server → Start*) on its default port (11434 / 1234).
+- **Huge JSON files** — use `--gzip`, or per-activity output; for local-model analysis the data is thinned automatically to `--max-chars`.
 
 ---
 
 ## Development
 
 ```bash
-# Clone and setup
-git clone https://github.com/kerem-ersoz/fit2json.git
-cd fit2json
-python3 -m venv .venv
-source .venv/bin/activate
 pip install -e ".[dev]"
-
-# Run tests
-pytest tests/ -v
-
-# Run with coverage
-pytest tests/ --cov=fit2json --cov-report=term-missing
+pytest -q
 ```
-
----
 
 ## License
 

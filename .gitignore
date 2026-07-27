@@ -21,6 +21,10 @@ env/
 # Environment
 .env
 
+# fit2json output / memory (user data)
+fit2json-memory/
+workouts/
+
 # OS
 .DS_Store
 Thumbs.db

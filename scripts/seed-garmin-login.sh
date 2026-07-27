@@ -40,7 +40,7 @@ docker run -it --rm \
   -v "$TOKEN_DIR":/tokens \
   -v "$LIB_DIR":/data \
   "$IMAGE" \
-  fetch garmin --days "$DAYS" --raw-dir /data/fit --json-dir /data/json
+  fetch garmin --days "$DAYS" --raw-dir /data/fit -o /data/json
 
 echo
 echo "Done. Tokens saved to $TOKEN_DIR."

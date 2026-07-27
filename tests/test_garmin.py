@@ -234,5 +234,5 @@ class TestGarminCLI:
     def test_fetch_garmin_help_lists_new_options(self):
         result = CliRunner().invoke(cli, ["fetch", "garmin", "--help"])
         assert result.exit_code == 0
-        assert "--json-dir" in result.output
         assert "--token-dir" in result.output
+        assert "--raw-dir" in result.output
