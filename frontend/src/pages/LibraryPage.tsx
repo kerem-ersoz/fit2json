@@ -26,7 +26,7 @@ export function LibraryPage() {
     return (data ?? []).filter((a) => {
       if (sport !== 'all' && a.sport !== sport) return false
       if (!q) return true
-      const hay = [a.sport, sportMeta(a.sport).label, a.start_time, a.file]
+      const hay = [a.sport, sportMeta(a.sport).label, a.start_time, a.source_file]
         .filter(Boolean)
         .join(' ')
         .toLowerCase()

@@ -52,6 +52,15 @@ def get_laps(activity_id: str):
     return {"laps": laps}
 
 
+@router.get("/{activity_id}/analyses")
+def get_analyses(activity_id: str):
+    """Past LLM analyses saved for this activity (newest first)."""
+    analyses = services.list_analyses(activity_id)
+    if analyses is None:
+        raise HTTPException(status_code=404, detail="Activity not found")
+    return {"analyses": analyses}
+
+
 @router.get("/{activity_id}/raw")
 def get_raw(activity_id: str):
     """The full lossless activity document (for download / inspection)."""

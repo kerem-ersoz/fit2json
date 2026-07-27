@@ -100,3 +100,54 @@ def test_laps_and_raw(client):
 
     raw = client.get(f"/api/activities/{aid}/raw").json()
     assert "messages" in raw and "record" in raw["messages"]
+
+
+def test_derive_source_ref():
+    from fit2json.web.services import derive_source_ref
+
+    g = derive_source_ref("garmin", "2024-03-10_07-30-00_1234567890.fit")
+    assert g and g["platform"] == "garmin" and g["id"] == "1234567890"
+    assert "connect.garmin.com" in g["url"]
+
+    s = derive_source_ref("strava", "2024-03-10T07-30-00Z_9988776.strava.json")
+    assert s and s["platform"] == "strava" and s["id"] == "9988776"
+    assert "strava.com/activities/9988776" in s["url"]
+
+    # A generic local .fit with no external id → no link.
+    assert derive_source_ref("local", "sample-activity.fit") is None
+
+
+def test_analyze_streams_and_saves(client, monkeypatch):
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None):
+        assert workout_paths and workout_paths[0].exists()
+        yield "## Analysis\n"
+        yield "Looking strong!"
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+
+    aid = client.get("/api/activities").json()[0]["id"]
+    r = client.post("/api/analyze", json={"activity_id": aid, "prompt": "How did I do?"})
+    assert r.status_code == 200
+    body = r.text
+    assert "event: delta" in body
+    assert "Looking strong!" in body
+    assert "event: done" in body
+
+    # The finished analysis is saved to memory and surfaces on the activity.
+    analyses = client.get(f"/api/activities/{aid}/analyses").json()["analyses"]
+    assert len(analyses) == 1
+    assert analyses[0]["prompt"] == "How did I do?"
+    assert "Looking strong!" in analyses[0]["content"]
+
+    # And in the global memory list.
+    entries = client.get("/api/memory").json()["entries"]
+    assert len(entries) == 1
+
+
+def test_analyze_missing_activity(client):
+    r = client.post("/api/analyze", json={"activity_id": "nope", "prompt": "hi"})
+    assert r.status_code == 404

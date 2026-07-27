@@ -1,6 +1,6 @@
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, Download } from 'lucide-react'
+import { ArrowLeft, Download, ExternalLink } from 'lucide-react'
 import { api } from '../lib/api'
 import { sportMeta } from '../lib/sport'
 import {
@@ -15,9 +15,8 @@ import {
 } from '../lib/format'
 import { ErrorState, LoadingState } from '../components/ui/Feedback'
 import { Card } from '../components/ui/Card'
-import { ActivityCharts } from '../features/activities/ActivityCharts'
 import { ActivityMap } from '../features/activities/ActivityMap'
-import { LapsTable } from '../features/activities/LapsTable'
+import { AnalysisPanel } from '../features/activities/AnalysisPanel'
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
@@ -31,8 +30,12 @@ function Stat({ label, value }: { label: string; value: string }) {
 export function ActivityDetailPage() {
   const { id = '' } = useParams()
   const detailQ = useQuery({ queryKey: ['activity', id], queryFn: () => api.activity(id), enabled: !!id })
-  const streamsQ = useQuery({ queryKey: ['streams', id], queryFn: () => api.streams(id), enabled: !!id })
-  const lapsQ = useQuery({ queryKey: ['laps', id], queryFn: () => api.laps(id), enabled: !!id })
+  // Streams are fetched only for the small orientation map (GPS polyline), not charts.
+  const streamsQ = useQuery({
+    queryKey: ['map', id],
+    queryFn: () => api.streams(id, 600),
+    enabled: !!id && !!detailQ.data?.has_gps,
+  })
 
   if (detailQ.isLoading) return <LoadingState label="Loading workout…" />
   if (detailQ.isError || !detailQ.data)
@@ -63,7 +66,7 @@ export function ActivityDetailPage() {
         >
           <ArrowLeft className="h-4 w-4" /> Library
         </Link>
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-600">
               <Icon className="h-6 w-6" />
@@ -73,16 +76,30 @@ export function ActivityDetailPage() {
               <p className="text-sm text-slate-500">{formatDateTime(d.start_time)}</p>
             </div>
           </div>
-          <a
-            href={api.rawUrl(d.id)}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 hover:bg-slate-50"
-            title="Download lossless JSON"
-          >
-            <Download className="h-4 w-4" />
-            <span className="hidden sm:inline">Raw JSON</span>
-          </a>
+          <div className="flex items-center gap-2">
+            {d.source_ref && (
+              <a
+                href={d.source_ref.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-brand-600 px-3 text-sm font-medium text-white hover:bg-brand-700"
+                title={`Open the original activity on ${d.source_ref.label}`}
+              >
+                <ExternalLink className="h-4 w-4" />
+                View on {d.source_ref.label}
+              </a>
+            )}
+            <a
+              href={api.rawUrl(d.id)}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 hover:bg-slate-50"
+              title="Download lossless JSON"
+            >
+              <Download className="h-4 w-4" />
+              <span className="hidden sm:inline">Raw JSON</span>
+            </a>
+          </div>
         </div>
       </div>
 
@@ -94,31 +111,25 @@ export function ActivityDetailPage() {
         </div>
       )}
 
+      {/* Analysis is the point of this page — not a rehash of Connect/Strava graphs. */}
+      <AnalysisPanel activityId={d.id} />
+
       {d.has_gps && streamsQ.data && streamsQ.data.latlng.length > 0 && (
         <section>
-          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Route</h2>
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Route</h2>
+            {d.source_ref && (
+              <a
+                href={d.source_ref.url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs font-medium text-brand-700 hover:underline"
+              >
+                Full map &amp; charts on {d.source_ref.label} →
+              </a>
+            )}
+          </div>
           <ActivityMap positions={streamsQ.data.latlng} />
-        </section>
-      )}
-
-      <section>
-        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Charts</h2>
-        {streamsQ.isLoading && <LoadingState label="Loading charts…" />}
-        {streamsQ.data && streamsQ.data.point_count > 0 ? (
-          <ActivityCharts streams={streamsQ.data} />
-        ) : (
-          !streamsQ.isLoading && (
-            <p className="text-sm text-slate-400">No per-second data for this workout.</p>
-          )
-        )}
-      </section>
-
-      {lapsQ.data && lapsQ.data.laps.length > 0 && (
-        <section>
-          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
-            Laps
-          </h2>
-          <LapsTable laps={lapsQ.data.laps} sport={d.sport} />
         </section>
       )}
     </div>
