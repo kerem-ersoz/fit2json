@@ -17,7 +17,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Iterator, List, Optional
 
 import click
 
@@ -85,7 +85,31 @@ def run_copilot(
     model: Optional[str] = None,
     stream: bool = True,
 ) -> str:
-    """Run analysis via the GitHub Copilot CLI subprocess."""
+    """Run analysis via the GitHub Copilot CLI subprocess.
+
+    Thin wrapper over :func:`stream_copilot` that collects the streamed chunks and
+    (optionally) echoes them to stdout, preserving the original CLI behavior.
+    """
+    chunks: List[str] = []
+    for chunk in stream_copilot(prompt, workout_paths, memory_dir, model):
+        chunks.append(chunk)
+        if stream:
+            sys.stdout.write(chunk)
+            sys.stdout.flush()
+    return "".join(chunks)
+
+
+def stream_copilot(
+    prompt: str,
+    workout_paths: List[Path],
+    memory_dir: Optional[Path] = None,
+    model: Optional[str] = None,
+) -> Iterator[str]:
+    """Yield analysis text chunks from the GitHub Copilot CLI subprocess.
+
+    Streams the CLI's stdout line by line so callers (CLI or web) can consume it
+    incrementally. Raises ``click.ClickException`` if the CLI is missing or fails.
+    """
     if not copilot_available():
         raise click.ClickException(
             "The 'copilot' CLI was not found on PATH. Install GitHub Copilot CLI, or use "
@@ -111,18 +135,13 @@ def run_copilot(
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1
     )
-    chunks: List[str] = []
     assert proc.stdout is not None
     for line in proc.stdout:
-        chunks.append(line)
-        if stream:
-            sys.stdout.write(line)
-            sys.stdout.flush()
+        yield line
     proc.wait()
     if proc.returncode != 0:
         err = proc.stderr.read() if proc.stderr else ""
         raise click.ClickException(f"copilot CLI failed (exit {proc.returncode}): {err.strip()}")
-    return "".join(chunks)
 
 
 # ── OpenAI-compatible backend (Ollama / LM Studio / custom) ─────────────────────
@@ -147,6 +166,50 @@ def _first_available_model(client) -> Optional[str]:
     return None
 
 
+def _build_openai_messages(
+    prompt: str,
+    workout_json: str,
+    memory_digest: Optional[str],
+    max_chars: int,
+) -> List[dict]:
+    """Build the system+user chat messages, compacting the workout JSON to fit."""
+    workout_json = compact_workout_json(workout_json, max_chars)
+
+    user_parts = []
+    if memory_digest:
+        user_parts.append(
+            "Prior workout analyses (memory, for trend context):\n" + memory_digest
+        )
+    user_parts.append("Workout data (lossless FIT JSON):\n```json\n" + workout_json + "\n```")
+    user_parts.append("Athlete's request:\n" + prompt)
+
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": "\n\n".join(user_parts)},
+    ]
+
+
+def stream_openai_compatible(
+    prompt: str,
+    workout_json: str,
+    base_url: str,
+    api_key: str,
+    memory_digest: Optional[str] = None,
+    model: Optional[str] = None,
+    max_chars: int = 200_000,
+) -> Iterator[str]:
+    """Yield analysis text chunks from an OpenAI-compatible chat endpoint."""
+    client = _make_client(base_url, api_key)
+    resolved_model = model or _first_available_model(client) or "local-model"
+    messages = _build_openai_messages(prompt, workout_json, memory_digest, max_chars)
+
+    resp = client.chat.completions.create(model=resolved_model, messages=messages, stream=True)
+    for event in resp:
+        delta = event.choices[0].delta.content if event.choices else None
+        if delta:
+            yield delta
+
+
 def run_openai_compatible(
     prompt: str,
     workout_json: str,
@@ -158,37 +221,20 @@ def run_openai_compatible(
     max_chars: int = 200_000,
 ) -> str:
     """Run analysis against a local/remote OpenAI-compatible chat endpoint."""
-    client = _make_client(base_url, api_key)
-    resolved_model = model or _first_available_model(client) or "local-model"
-
-    workout_json = compact_workout_json(workout_json, max_chars)
-
-    user_parts = []
-    if memory_digest:
-        user_parts.append(
-            "Prior workout analyses (memory, for trend context):\n" + memory_digest
-        )
-    user_parts.append("Workout data (lossless FIT JSON):\n```json\n" + workout_json + "\n```")
-    user_parts.append("Athlete's request:\n" + prompt)
-    user_content = "\n\n".join(user_parts)
-
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_content},
-    ]
-
     if stream:
         collected: List[str] = []
-        resp = client.chat.completions.create(model=resolved_model, messages=messages, stream=True)
-        for event in resp:
-            delta = event.choices[0].delta.content if event.choices else None
-            if delta:
-                collected.append(delta)
-                sys.stdout.write(delta)
-                sys.stdout.flush()
+        for delta in stream_openai_compatible(
+            prompt, workout_json, base_url, api_key, memory_digest, model, max_chars
+        ):
+            collected.append(delta)
+            sys.stdout.write(delta)
+            sys.stdout.flush()
         sys.stdout.write("\n")
         return "".join(collected)
 
+    client = _make_client(base_url, api_key)
+    resolved_model = model or _first_available_model(client) or "local-model"
+    messages = _build_openai_messages(prompt, workout_json, memory_digest, max_chars)
     resp = client.chat.completions.create(model=resolved_model, messages=messages)
     text = resp.choices[0].message.content or ""
     sys.stdout.write(text + "\n")
