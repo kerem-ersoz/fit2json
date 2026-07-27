@@ -28,8 +28,14 @@ fit2json = "fit2json.cli:cli"
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    "httpx>=0.27",
     "ruff>=0.6.0",
     "pyright>=1.1.380",
+]
+web = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",
 ]
 
 [tool.setuptools.packages.find]
@@ -45,6 +51,17 @@ src = ["src", "tests"]
 # B = flake8-bugbear (likely bugs). Style/line-length (E) and pyupgrade (UP)
 # can be enabled later once the codebase is modernized.
 select = ["F", "I", "B"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI dependency-injection defaults (File/Query/Depends/...) are intentional
+# factory calls, not the mutable-default bug B008 targets.
+extend-immutable-calls = [
+    "fastapi.Body",
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Query",
+]
 
 [tool.pyright]
 include = ["src"]

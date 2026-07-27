@@ -438,5 +438,50 @@ def memory_show(entry_id, memory_dir):
     click.echo(content)
 
 
+# ── serve (FitSift web UI) ───────────────────────────────────────────────────────
+
+
+@cli.command()
+@click.option("--host", default="127.0.0.1", help="Bind host (use 0.0.0.0 to reach it from a phone).")
+@click.option("--port", type=int, default=8000, help="Bind port.")
+@click.option("--library", "library_dir", default=None,
+              help="Workout-JSON library dir (default ~/.fit2json/library/json).")
+@click.option("--memory", "memory_dir", default=None,
+              help="Training-memory corpus dir (default ./fit2json-memory).")
+@click.option("--frontend", "frontend_dist", default=None,
+              help="Path to the built SPA (frontend/dist). Auto-detected from source checkout.")
+@click.option("--dev", is_flag=True, help="Enable autoreload for development.")
+def serve(host, port, library_dir, memory_dir, frontend_dist, dev):
+    """Serve the FitSift web UI + JSON API locally."""
+    import os
+
+    try:
+        import uvicorn
+    except ImportError as exc:
+        raise click.ClickException(
+            "Web dependencies are not installed. Install them with: pip install -e '.[web]'"
+        ) from exc
+
+    if library_dir:
+        os.environ["FITSIFT_LIBRARY"] = library_dir
+    if memory_dir:
+        os.environ["FITSIFT_MEMORY"] = memory_dir
+    if frontend_dist:
+        os.environ["FITSIFT_FRONTEND_DIST"] = frontend_dist
+    else:
+        guess = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+        if guess.exists():
+            os.environ["FITSIFT_FRONTEND_DIST"] = str(guess)
+
+    serving_ui = "FITSIFT_FRONTEND_DIST" in os.environ
+    click.echo(f"FitSift API on http://{host}:{port}/api  (docs at /docs)")
+    if serving_ui:
+        click.echo(f"FitSift UI  on http://{host}:{port}/")
+    else:
+        click.echo("No built SPA found — run the Vite dev server for the UI (see frontend/README.md).")
+
+    uvicorn.run("fit2json.web.app:app", host=host, port=port, reload=dev)
+
+
 if __name__ == "__main__":
     cli()
