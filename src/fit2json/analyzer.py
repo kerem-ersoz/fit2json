@@ -6,10 +6,12 @@ import json
 import os
 import sys
 import time
-from typing import List, Optional
+from typing import TYPE_CHECKING, Optional
 
 import click
 
+if TYPE_CHECKING:
+    from openai.types.chat import ChatCompletionMessageParam
 
 # Provider presets: (base_url, env_var_for_key, default_model)
 PROVIDERS = {
@@ -229,11 +231,10 @@ def analyze_activities_deep(
     interrupted runs can continue where they left off.
     """
     import hashlib
+    import importlib.util
     import tempfile
 
-    try:
-        from openai import OpenAI
-    except ImportError:
+    if importlib.util.find_spec("openai") is None:
         raise click.ClickException("openai package required. Install with: pip install openai")
 
     url, key, resolved_model = _resolve_provider(provider, base_url, api_key, model)
@@ -418,18 +419,18 @@ def analyze_activities(
             base_url=base_url, api_key=api_key, fast_model=fast_model,
         )
 
-    try:
-        from openai import OpenAI
-    except ImportError:
+    import importlib.util
+
+    if importlib.util.find_spec("openai") is None:
         raise click.ClickException("openai package required. Install with: pip install openai")
 
     url, key, resolved_model = _resolve_provider(provider, base_url, api_key, model)
-    client = OpenAI(base_url=url, api_key=key)
+    client = _make_client(url, key)
 
     budget = max_chars or MAX_INPUT_CHARS
     json_data = _compact_for_llm(json_data, max_chars=budget)
 
-    messages = [
+    messages: list[ChatCompletionMessageParam] = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {
             "role": "user",

@@ -11,6 +11,8 @@ from typing import List, Optional
 import click
 import requests
 
+from fit2json.models import Activity, ActivitySummary, TimeSeriesSample
+
 
 def fetch_strava_activities(
     days: int = 30,
@@ -144,17 +146,12 @@ def fetch_strava_activities(
     return downloaded
 
 
-def parse_strava_json(filepath: Path) -> dict:
+def parse_strava_json(filepath: Path) -> Activity:
     """Parse a Strava JSON activity file into a structure compatible with our models.
 
     This allows Strava stream data to be converted using the same pipeline as FIT files.
     """
     import json
-    from fit2json.models import (
-        Activity,
-        ActivitySummary,
-        TimeSeriesSample,
-    )
 
     data = json.loads(filepath.read_text())
     streams = data.get("streams", {})

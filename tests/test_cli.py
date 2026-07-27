@@ -4,7 +4,6 @@ from click.testing import CliRunner
 
 from fit2json.cli import cli
 
-
 runner = CliRunner()
 
 

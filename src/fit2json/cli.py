@@ -33,14 +33,14 @@ def convert(path: str, output_path: Optional[str], indent: int):
 
     PATH can be a single .fit file or a directory containing .fit files.
     """
-    from fit2json.sources.local import collect_fit_files
-    from fit2json.parser import parse_fit_file
     from fit2json.output import build_output, write_json
+    from fit2json.parser import parse_fit_file
+    from fit2json.sources.local import collect_fit_files
 
     try:
         fit_files = collect_fit_files(path)
     except (FileNotFoundError, ValueError) as e:
-        raise click.ClickException(str(e))
+        raise click.ClickException(str(e)) from e
 
     click.echo(f"Processing {len(fit_files)} .fit file(s)...", err=True)
 
@@ -79,9 +79,9 @@ def fetch():
 @click.option("--raw-dir", default=None, help="Directory to save raw .fit files.")
 def fetch_garmin(days: int, output_path: Optional[str], email: Optional[str], password: Optional[str], raw_dir: Optional[str]):
     """Fetch and convert activities from Garmin Connect."""
-    from fit2json.sources.garmin import fetch_garmin_activities
-    from fit2json.parser import parse_fit_file
     from fit2json.output import build_output, write_json
+    from fit2json.parser import parse_fit_file
+    from fit2json.sources.garmin import fetch_garmin_activities
 
     fit_files = fetch_garmin_activities(days=days, output_dir=raw_dir, email=email, password=password)
 
@@ -112,8 +112,8 @@ def fetch_garmin(days: int, output_path: Optional[str], email: Optional[str], pa
 @click.option("--raw-dir", default=None, help="Directory to save raw activity files.")
 def fetch_strava(days: int, output_path: Optional[str], client_id: Optional[str], client_secret: Optional[str], refresh_token: Optional[str], raw_dir: Optional[str]):
     """Fetch and convert activities from Strava."""
-    from fit2json.sources.strava import fetch_strava_activities, parse_strava_json
     from fit2json.output import build_output, write_json
+    from fit2json.sources.strava import fetch_strava_activities, parse_strava_json
 
     activity_files = fetch_strava_activities(
         days=days,

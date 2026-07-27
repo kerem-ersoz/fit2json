@@ -2,22 +2,18 @@
 
 from __future__ import annotations
 
-import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import fitdecode
 
 from fit2json.models import (
     Activity,
     ActivitySummary,
-    HRZoneSeconds,
     Lap,
-    TimeSeriesSample,
 )
 from fit2json.sampler import downsample_to_1min
-
 
 # FIT sport enum mapping (common values)
 SPORT_MAP = {

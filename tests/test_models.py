@@ -4,9 +4,7 @@ from fit2json.models import (
     Activity,
     ActivitySummary,
     HRZoneSeconds,
-    Lap,
     OutputDocument,
-    TimeSeriesSample,
 )
 
 

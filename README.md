@@ -596,6 +596,10 @@ pytest tests/ -v
 
 # Run with coverage
 pytest tests/ --cov=fit2json --cov-report=term-missing
+
+# Lint and type-check (same checks CI runs)
+ruff check .          # lint (add --fix to auto-fix imports, etc.)
+pyright               # static type check
 ```
 
 ---

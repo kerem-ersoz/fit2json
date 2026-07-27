@@ -30,10 +30,10 @@ def fetch_garmin_activities(
     """
     try:
         from garminconnect import Garmin
-    except ImportError:
+    except ImportError as exc:
         raise click.ClickException(
             "garminconnect package required. Install with: pip install garminconnect"
-        )
+        ) from exc
 
     email = email or os.environ.get("GARMIN_EMAIL")
     password = password or os.environ.get("GARMIN_PASSWORD")
@@ -77,8 +77,8 @@ def fetch_garmin_activities(
             if isinstance(fit_data, bytes):
                 # Check if it's a zip file
                 if fit_data[:2] == b"PK":
-                    import zipfile
                     import io
+                    import zipfile
 
                     with zipfile.ZipFile(io.BytesIO(fit_data)) as zf:
                         for name in zf.namelist():
