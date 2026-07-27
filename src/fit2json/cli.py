@@ -58,6 +58,7 @@ def _emit_activities(
         path = write_combined(
             doc, output_path, indent=indent, gzip_out=gzip_out or output_path.endswith(".gz")
         )
+        assert path is not None  # write_combined returns a path when output_path is set
         click.echo(
             f"Wrote {len(activities)} activity/ies to {path} ({_human(path.stat().st_size)})",
             err=True,
@@ -109,7 +110,7 @@ def convert(path: str, output_path: Optional[str], gzip_out: bool, indent: int, 
     try:
         fit_files = collect_fit_files(path)
     except (FileNotFoundError, ValueError) as e:
-        raise click.ClickException(str(e))
+        raise click.ClickException(str(e)) from e
 
     click.echo(f"Decoding {len(fit_files)} .fit file(s)...", err=True)
     activities = _decode_fit_paths(fit_files)
@@ -238,11 +239,12 @@ def analyze(source, prompt, backend, base_url, model, api_key, no_stream, max_ch
     else:
         if sys.stdin.isatty():
             raise click.ClickException("Provide a workout JSON file/dir or pipe data via stdin.")
-        inline_json = sys.stdin.read()
-        if not inline_json.strip():
+        stdin_text = sys.stdin.read()
+        if not stdin_text.strip():
             raise click.ClickException("No data received from stdin.")
         import json as _json
-        activities = activities_from_obj(_json.loads(inline_json))
+        activities = activities_from_obj(_json.loads(stdin_text))
+        inline_json = stdin_text
 
     if not activities:
         raise click.ClickException("No activities found in the input.")

@@ -16,7 +16,6 @@ from click.testing import CliRunner
 from fit2json.cli import cli
 from fit2json.sources.garmin import fetch_garmin_activities
 
-
 # ── Fakes ──────────────────────────────────────────────────────────────────────
 
 

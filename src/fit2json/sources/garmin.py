@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 import sys
-import inspect
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import click
 
@@ -72,10 +72,10 @@ def _init_garmin_client(
             GarminConnectConnectionError,
             GarminConnectTooManyRequestsError,
         )
-    except ImportError:
+    except ImportError as exc:
         raise click.ClickException(
             "garminconnect package required. Install with: pip install garminconnect"
-        )
+        ) from exc
 
     # 1) Try to resume from a previously cached token store.
     resume_error: Optional[Exception] = None
@@ -88,7 +88,7 @@ def _init_garmin_client(
         raise click.ClickException(
             f"Garmin rate limit hit while resuming session: {e}. "
             "Wait a while before retrying."
-        )
+        ) from e
     except Exception as e:  # noqa: BLE001 - any resume failure falls back to login
         resume_error = e
 
@@ -109,7 +109,7 @@ def _init_garmin_client(
     # prompt_mfa callback (garminconnect >= 0.3), wire one up: prompt interactively,
     # or fail cleanly when unattended (the background job must rely on a pre-seeded
     # token store rather than blocking on an MFA prompt).
-    ctor_kwargs = {"email": email, "password": password}
+    ctor_kwargs: dict[str, Any] = {"email": email, "password": password}
     if _supports_param(Garmin.__init__, "prompt_mfa"):
         if interactive:
             ctor_kwargs["prompt_mfa"] = lambda: click.prompt("Garmin MFA code").strip()
@@ -129,7 +129,7 @@ def _init_garmin_client(
         client = Garmin(**ctor_kwargs)
         client.login()
     except GarminConnectTooManyRequestsError as e:
-        raise click.ClickException(f"Garmin rate limit hit during login: {e}.")
+        raise click.ClickException(f"Garmin rate limit hit during login: {e}.") from e
     except (GarminConnectAuthenticationError, GarminConnectConnectionError) as e:
         hint = (
             ""
@@ -138,9 +138,9 @@ def _init_garmin_client(
             "interactive login (scripts/seed-garmin-login.sh) before enabling the "
             "background job."
         )
-        raise click.ClickException(f"Garmin authentication failed: {e}.{hint}")
+        raise click.ClickException(f"Garmin authentication failed: {e}.{hint}") from e
     except Exception as e:  # noqa: BLE001 - unexpected login failure
-        raise click.ClickException(f"Garmin login failed: {e}")
+        raise click.ClickException(f"Garmin login failed: {e}") from e
     finally:
         if saved_tokens_env is not None:
             os.environ["GARMINTOKENS"] = saved_tokens_env
@@ -187,15 +187,14 @@ def fetch_garmin_activities(
         List of Paths to newly downloaded .fit files (already-present activities are
         skipped when ``output_dir`` points at a persistent library).
     """
-    if interactive is None:
-        interactive = sys.stdin.isatty()
+    interactive_resolved = sys.stdin.isatty() if interactive is None else interactive
 
     token_store = _resolve_token_dir(token_dir)
 
     save_dir = Path(output_dir) if output_dir else Path(tempfile.mkdtemp(prefix="fit2json_garmin_"))
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    client = _init_garmin_client(email, password, token_store, interactive)
+    client = _init_garmin_client(email, password, token_store, interactive_resolved)
 
     start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
     end_date = datetime.now().strftime("%Y-%m-%d")
@@ -211,10 +210,12 @@ def fetch_garmin_activities(
     skipped = 0
     for act in activities:
         activity_id = act.get("activityId")
+        if activity_id is None:
+            continue
         activity_name = act.get("activityName", "activity")
         start = act.get("startTimeLocal", "unknown")
 
-        if activity_id is not None and _already_downloaded(save_dir, activity_id):
+        if _already_downloaded(save_dir, activity_id):
             skipped += 1
             continue
 
@@ -228,8 +229,8 @@ def fetch_garmin_activities(
             if isinstance(fit_data, bytes):
                 # Check if it's a zip file
                 if fit_data[:2] == b"PK":
-                    import zipfile
                     import io
+                    import zipfile
 
                     with zipfile.ZipFile(io.BytesIO(fit_data)) as zf:
                         for name in zf.namelist():

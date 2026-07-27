@@ -17,10 +17,12 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 import click
 
+if TYPE_CHECKING:
+    from openai.types.chat import ChatCompletionMessageParam
 
 SYSTEM_PROMPT = (
     "You are an expert running/cycling/fitness coach and data analyst. You analyze "
@@ -131,8 +133,8 @@ def run_copilot(
 def _make_client(base_url: str, api_key: str):
     try:
         from openai import OpenAI
-    except ImportError:  # pragma: no cover
-        raise click.ClickException("openai package required. Install with: pip install openai")
+    except ImportError as exc:  # pragma: no cover
+        raise click.ClickException("openai package required. Install with: pip install openai") from exc
     return OpenAI(base_url=base_url, api_key=api_key)
 
 
@@ -172,7 +174,7 @@ def run_openai_compatible(
     user_parts.append("Athlete's request:\n" + prompt)
     user_content = "\n\n".join(user_parts)
 
-    messages = [
+    messages: list[ChatCompletionMessageParam] = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_content},
     ]

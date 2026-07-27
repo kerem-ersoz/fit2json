@@ -1,6 +1,5 @@
 """Tests for the filesystem memory corpus."""
 
-import json
 
 from fit2json.memory import MemoryStore, activity_id
 from fit2json.models import DecodedActivity

@@ -11,7 +11,6 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-
 # Minimal fallback for the rare case a device stores `sport` as a raw integer
 # (fitdecode normally decodes it to a string like "running").
 SPORT_MAP = {
