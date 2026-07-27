@@ -268,7 +268,8 @@ def fetch_strava(days, output_path, gzip_out, client_id, client_secret, refresh_
 @click.option("--reasoning-effort", "--effort", "reasoning_effort",
               type=click.Choice(["none", "minimal", "low", "medium", "high", "xhigh", "max"]),
               default=None,
-              help="Reasoning effort for the copilot backend (passed to the Copilot CLI).")
+              help="Reasoning effort for the copilot backend (passed to the Copilot CLI). "
+                   "Requires an explicit --model — the 'auto' router does not support it.")
 @click.option("--api-key", default=None, help="API key for a custom --base-url endpoint.")
 @click.option("--no-stream", is_flag=True, help="Disable streaming output.")
 @click.option("--max-chars", type=int, default=200_000,

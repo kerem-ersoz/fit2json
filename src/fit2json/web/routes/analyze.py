@@ -148,14 +148,13 @@ def _single_event_gen(req: AnalyzeRequest, resolved: str, found_one) -> Iterator
 
     def build_stream() -> Iterator[str]:
         if resolved == "copilot":
-            kwargs = {"reasoning_effort": req.reasoning_effort} if req.reasoning_effort else {}
             return analyzer.stream_copilot(
                 prompt=effective_prompt,
                 workout_paths=[path],
                 memory_dir=(store.root if store else None),
                 model=req.model,
                 silent=True,
-                **kwargs,
+                reasoning_effort=req.reasoning_effort,
             )
         if resolved in analyzer.LOCAL_BACKENDS:
             url, key = analyzer.LOCAL_BACKENDS[resolved]
