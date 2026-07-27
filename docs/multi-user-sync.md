@@ -1,11 +1,21 @@
 # Multi-user sync for Azure Container Apps
 
-**Status:** planning · **Scope now:** single-owner, many replicas/browsers consistent ·
-**Scope later:** true per-user multi-tenancy (non-breaking).
+> ⚠️ **PARKED — superseded by [`product-direction.md`](./product-direction.md).**
+> The product is now **local-first** (data in a local database on the user's device; privacy
+> is architectural, not policy). This hosted, multi-tenant, cloud-storage plan is **no longer
+> the primary direction**. It is retained as the blueprint for the **optional future _hosted
+> adapter_** — trilemma **corner C (Frontier + Easy, sacrificing privacy)** — to be built only
+> if mainstream demand proves it out.
+>
+> **Why it isn't wasted:** the `ObjectStore` abstraction below is exactly the seam that lets a
+> hosted adapter slot into the local-first core without a rewrite. Treat everything here as
+> "corner C design," not "next up."
 
-This document is the tracked, editable source of truth for the sync/storage rework. It
-captures the problem, the confirmed decisions, the target architecture (with diagrams), a
-phased plan, and the key trade-offs.
+**Status:** parked (hosted adapter / corner C) · **Primary direction:** local-first — see
+`docs/product-direction.md`.
+
+This document captures the problem, decisions, target architecture (with diagrams), a phased
+plan, and trade-offs for the **hosted** deployment path specifically.
 
 ---
 
