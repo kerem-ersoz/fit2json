@@ -197,6 +197,36 @@ class TestGarminDedup:
         assert (raw_dir / "2024-01-01_07-00-00_111.fit").read_bytes() == b"OLD"
 
 
+# ── Token persistence (version tolerance) ───────────────────────────────────────
+
+
+class TestPersistTokens:
+    def _client_with(self, attr, dumped):
+        holder = types.SimpleNamespace(dump=lambda path: dumped.append(path))
+        return types.SimpleNamespace(**{attr: holder})
+
+    def test_uses_garth_attr_on_old_library(self, tmp_path):
+        from fit2json.sources.garmin import _persist_tokens
+
+        dumped = []
+        client = self._client_with("garth", dumped)  # garminconnect <= 0.2.x
+        assert _persist_tokens(client, str(tmp_path / "tok")) is True
+        assert dumped == [str(tmp_path / "tok")]
+
+    def test_uses_client_attr_on_new_library(self, tmp_path):
+        from fit2json.sources.garmin import _persist_tokens
+
+        dumped = []
+        client = self._client_with("client", dumped)  # garminconnect >= 0.3.x
+        assert _persist_tokens(client, str(tmp_path / "tok")) is True
+        assert dumped == [str(tmp_path / "tok")]
+
+    def test_returns_false_when_no_garth_client(self, tmp_path):
+        from fit2json.sources.garmin import _persist_tokens
+
+        assert _persist_tokens(types.SimpleNamespace(), str(tmp_path / "tok")) is False
+
+
 # ── CLI wiring ──────────────────────────────────────────────────────────────────
 
 

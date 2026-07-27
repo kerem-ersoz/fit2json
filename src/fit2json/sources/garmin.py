@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import inspect
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -12,6 +13,32 @@ from typing import List, Optional
 import click
 
 DEFAULT_TOKEN_DIR = "~/.garminconnect"
+
+
+def _supports_param(func, name: str) -> bool:
+    """Return True if ``func`` accepts a keyword parameter named ``name``."""
+    try:
+        return name in inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def _persist_tokens(client, token_dir: str) -> bool:
+    """Persist the garth session to ``token_dir`` (best-effort, version-tolerant).
+
+    garminconnect exposes its underlying garth client as ``.garth`` (<= 0.2.x) or
+    ``.client`` (>= 0.3.x); try both so tokens are cached regardless of version.
+    """
+    for attr in ("garth", "client"):
+        garth_client = getattr(client, attr, None)
+        if garth_client is not None and hasattr(garth_client, "dump"):
+            try:
+                Path(token_dir).mkdir(parents=True, exist_ok=True)
+                garth_client.dump(token_dir)
+                return True
+            except Exception:  # noqa: BLE001 - persistence is best-effort
+                return False
+    return False
 
 
 def _resolve_token_dir(token_dir: Optional[str]) -> str:
@@ -77,39 +104,52 @@ def _init_garmin_client(
         )
 
     click.echo(f"Logging in to Garmin Connect as {email}...")
-    # NOTE: garminconnect's login() resolves tokenstore from the GARMINTOKENS env var
-    # when no argument is given, which would make it try to *resume* again instead of
-    # doing a credential login. Temporarily clear it so this is a genuine fresh login.
+
+    # MFA handling varies by library version. When the constructor supports a
+    # prompt_mfa callback (garminconnect >= 0.3), wire one up: prompt interactively,
+    # or fail cleanly when unattended (the background job must rely on a pre-seeded
+    # token store rather than blocking on an MFA prompt).
+    ctor_kwargs = {"email": email, "password": password}
+    if _supports_param(Garmin.__init__, "prompt_mfa"):
+        if interactive:
+            ctor_kwargs["prompt_mfa"] = lambda: click.prompt("Garmin MFA code").strip()
+        else:
+            def _mfa_unattended():
+                raise GarminConnectAuthenticationError(
+                    "Garmin requested an MFA code but this run is non-interactive."
+                )
+
+            ctor_kwargs["prompt_mfa"] = _mfa_unattended
+
+    # login() resolves its tokenstore from GARMINTOKENS when given no argument, which
+    # would make it try to *resume* again instead of authenticating. Clear it so this
+    # is a genuine fresh credential login on every library version.
     saved_tokens_env = os.environ.pop("GARMINTOKENS", None)
     try:
-        client = Garmin(email=email, password=password)
+        client = Garmin(**ctor_kwargs)
         client.login()
     except GarminConnectTooManyRequestsError as e:
         raise click.ClickException(f"Garmin rate limit hit during login: {e}.")
     except (GarminConnectAuthenticationError, GarminConnectConnectionError) as e:
-        raise click.ClickException(f"Garmin authentication failed: {e}")
-    except Exception as e:  # noqa: BLE001 - e.g. an MFA prompt with no interactive stdin
         hint = (
             ""
             if interactive
             else " If this account uses MFA, seed the token store once with an "
-            "interactive login (see scripts/seed-garmin-login.sh) before enabling "
-            "the background job."
+            "interactive login (scripts/seed-garmin-login.sh) before enabling the "
+            "background job."
         )
-        raise click.ClickException(f"Garmin login failed: {e}.{hint}")
+        raise click.ClickException(f"Garmin authentication failed: {e}.{hint}")
+    except Exception as e:  # noqa: BLE001 - unexpected login failure
+        raise click.ClickException(f"Garmin login failed: {e}")
     finally:
         if saved_tokens_env is not None:
             os.environ["GARMINTOKENS"] = saved_tokens_env
 
     # Persist tokens so subsequent runs can resume without a fresh login.
-    try:
-        Path(token_dir).mkdir(parents=True, exist_ok=True)
-        client.garth.dump(token_dir)
+    if _persist_tokens(client, token_dir):
         click.echo(f"Saved Garmin session tokens to {token_dir}.")
-    except Exception as e:  # noqa: BLE001 - persistence is best-effort
-        click.echo(
-            f"Warning: could not persist Garmin tokens to {token_dir}: {e}", err=True
-        )
+    else:
+        click.echo(f"Warning: could not persist Garmin tokens to {token_dir}.", err=True)
 
     return client
 
