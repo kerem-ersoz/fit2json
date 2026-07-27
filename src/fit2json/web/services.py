@@ -364,7 +364,7 @@ def list_analyses(activity_id: str) -> Optional[List[Dict[str, Any]]]:
     src = act.source_file
     # Match by source_file (stable across formats) or the derived memory id.
     entries = [
-        e for e in store.load_index()
+        e for e in _all_memory_entries()
         if e.get("source_file") == src or e.get("activity_id") == aid
     ]
     entries.sort(key=lambda e: e.get("created_at") or "", reverse=True)
@@ -374,18 +374,89 @@ def list_analyses(activity_id: str) -> Optional[List[Dict[str, Any]]]:
 def list_memory(
     sport: Optional[str] = None, days: Optional[int] = None, limit: int = 50
 ) -> List[Dict[str, Any]]:
+    from datetime import datetime, timedelta, timezone
+
+    from fit2json.memory import _parse_date
+
     store = _memory_store()
-    mode = "same-sport" if sport else "all"
-    entries = store.recall(sport=sport, days=days, limit=limit, mode=mode)
+    entries = _all_memory_entries()
+    entries.sort(key=lambda e: e.get("created_at") or "", reverse=True)
+    if sport:
+        entries = [e for e in entries if (e.get("sport") or "").lower() == sport.lower()]
+    if days:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        floor = datetime.min.replace(tzinfo=timezone.utc)
+        entries = [e for e in entries if (_parse_date(e.get("date")) or floor) >= cutoff]
+    entries = entries[:limit]
     return [_entry_view(store, e, with_body=False) for e in entries]
 
 
 def get_memory_entry(entry_id: str) -> Optional[Dict[str, Any]]:
     store = _memory_store()
-    for entry in store.load_index():
+    for entry in _all_memory_entries():
         if entry.get("entry_id") == entry_id:
             return _entry_view(store, entry, with_body=True)
     return None
+
+
+def _parse_memory_md(path: Path, root: Path) -> Optional[Dict[str, Any]]:
+    """Parse one analysis .md file's front-matter into an index-style entry."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if not text.startswith("---"):
+        return None
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return None
+    entry: Dict[str, Any] = {}
+    for line in parts[1].splitlines():
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        if key == "prompt":
+            try:
+                entry["prompt"] = json.loads(value) if value else ""
+            except json.JSONDecodeError:
+                entry["prompt"] = value
+        elif key == "metrics":
+            try:
+                entry["metrics"] = json.loads(value) if value else {}
+            except json.JSONDecodeError:
+                entry["metrics"] = {}
+        else:
+            entry[key] = value or None
+    try:
+        entry["path"] = str(path.relative_to(root))
+    except ValueError:
+        entry["path"] = path.name
+    return entry
+
+
+def _all_memory_entries() -> List[Dict[str, Any]]:
+    """All saved analyses, reading the .md corpus as source of truth (index is a cache).
+
+    Starts from index.jsonl (fast) then scans ``<memory>/<sport>/*.md`` so analyses that
+    were never indexed (or an out-of-date index) are still picked up.
+    """
+    store = _memory_store()
+    by_id: Dict[str, Dict[str, Any]] = {}
+    for entry in store.load_index():
+        eid = entry.get("entry_id")
+        if eid:
+            by_id[eid] = entry
+    root = store.root
+    if root.exists():
+        for md in sorted(root.glob("*/*.md")):
+            parsed = _parse_memory_md(md, root)
+            if parsed and parsed.get("entry_id") and parsed["entry_id"] not in by_id:
+                by_id[parsed["entry_id"]] = parsed
+    return list(by_id.values())
 
 
 # ── ingest (upload / fetch) ──────────────────────────────────────────────────

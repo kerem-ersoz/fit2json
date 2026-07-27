@@ -309,3 +309,36 @@ def test_legacy_0_1_format_shim():
     assert metrics["avg_hr"] == 110
     assert round(metrics["avg_speed_mps"], 4) == round(4000.0 / 2400, 4)
     assert len(act.messages.get("lap") or []) == 1
+
+
+def test_memory_reads_unindexed_md_from_filesystem(client):
+    """The memory listing scans the .md corpus, not just index.jsonl."""
+    import os
+    from pathlib import Path
+
+    mem = Path(os.environ["FITSIFT_MEMORY"])
+    sport_dir = mem / "running"
+    sport_dir.mkdir(parents=True, exist_ok=True)
+    (sport_dir / "2024-05-05T0700-00Z_run_deadbeef.md").write_text(
+        "---\n"
+        "entry_id: e-unindexed\n"
+        "activity_id: 2024-05-05T0700-00Z_run\n"
+        "date: 2024-05-05T07:00:00+00:00\n"
+        "sport: running\n"
+        "source_file: run.fit\n"
+        "backend: copilot\n"
+        "model: \n"
+        "created_at: 2024-05-05T07:30:00+00:00\n"
+        'prompt: "How was my run?"\n'
+        'metrics: {"distance_m": 5000}\n'
+        "---\n\n"
+        "# Running — 2024-05-05\n\n**Prompt:** How was my run?\n\nGreat run!\n",
+        encoding="utf-8",
+    )
+
+    entries = client.get("/api/memory").json()["entries"]
+    ids = [e["entry_id"] for e in entries]
+    assert "e-unindexed" in ids
+
+    entry = client.get("/api/memory/e-unindexed").json()
+    assert "Great run!" in (entry.get("content") or "")
