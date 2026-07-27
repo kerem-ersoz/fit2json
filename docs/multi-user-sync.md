@@ -96,6 +96,11 @@ flowchart TB
         Blob[("Azure Blob Storage — single source of truth")]
     end
 
+    subgraph Models["Model providers (analyze / SSE)"]
+        CP["Copilot CLI<br/>subprocess · needs CLI + auth · reads temp files"]
+        LLM["OpenAI-compatible endpoint<br/>Ollama / LM Studio / custom base-url"]
+    end
+
     B1 -->|"HTTPS + client polling"| Web
     B2 -->|"HTTPS + client polling"| Web
     R1 -->|"list / read / conditional-write"| Blob
@@ -103,6 +108,8 @@ flowchart TB
     Job -->|"pull .fit / streams"| G
     Job -->|"pull .fit / streams"| S
     Job -->|"conditional-create write"| Blob
+    Web -->|"analyze: copilot subprocess"| CP
+    Web -->|"analyze: chat completions (SSE)"| LLM
 ```
 
 Blob container key layout (all under a configurable root prefix so a `users/{uid}/` segment
@@ -136,8 +143,8 @@ flowchart TB
         ROLE["Role: Storage Blob Data Contributor"]
     end
     subgraph Config["Config & secrets"]
-        SEC["ACA secrets / Key Vault refs<br/>GARMIN_*, STRAVA_*"]
-        VARS["Env: FITSIFT_STORAGE_BACKEND=azureblob<br/>FITSIFT_BLOB_*, library/memory prefixes"]
+        SEC["ACA secrets / Key Vault refs<br/>GARMIN_*, STRAVA_*, model API key"]
+        VARS["Env: FITSIFT_STORAGE_BACKEND=azureblob<br/>FITSIFT_BLOB_*, prefixes<br/>analyze backend / base-url"]
     end
     SA[("Storage Account (Blob)")]
     IMG --> APP
@@ -158,7 +165,11 @@ flowchart TB
 
 Inbound TLS to the web app only; the Job has no ingress. Both reach Blob over 443 (private
 endpoint preferred); the Job egresses to Garmin/Strava, optionally via a NAT gateway for a
-stable outbound IP (helps with rate-limiting/allowlists).
+stable outbound IP (helps with rate-limiting/allowlists). For **analyze**, the web app either
+spawns the Copilot CLI as an in-container subprocess (only if the CLI is installed +
+authenticated in the image) or egresses over HTTPS to an OpenAI-compatible model endpoint —
+a dedicated model Container App, a sidecar, or an external service (the `localhost` Ollama /
+LM Studio defaults won't exist in the container).
 
 ```mermaid
 flowchart LR
@@ -174,6 +185,7 @@ flowchart LR
         BLOB["Blob *.blob.core.windows.net :443"]
     end
     GARMIN["Garmin / Strava APIs :443"]
+    MODELS["OpenAI-compatible model endpoint<br/>(model Container App / sidecar / external) :443"]
     User -->|HTTPS| ING
     ING --> WEB
     WEB -->|HTTPS 443| PE
@@ -181,6 +193,7 @@ flowchart LR
     JOB -->|HTTPS 443| PE
     JOB -->|HTTPS 443| NAT
     NAT --> GARMIN
+    WEB -->|"HTTPS chat completions (analyze)"| MODELS
 ```
 
 ### 4.4 Storage layer — ObjectStore abstraction & Blob internals
@@ -244,13 +257,48 @@ sequenceDiagram
     UI->>UI: re-render library
 ```
 
+### 4.6 Analysis / model-provider flow
+
+`POST /api/analyze` streams (SSE) from one of three backends resolved per request. The
+**copilot** backend runs the `copilot` CLI as a subprocess and reads the workout, memory, and
+(for freeform) the whole library **by local path** — so with Blob those blobs are first
+**materialized to a temp dir**. The **ollama / lmstudio / custom base-url** backends instead
+read the activity + memory from the store, **inline and thin** the JSON, and call an
+OpenAI-compatible endpoint. Either way the final analysis is saved back to `memory/`.
+
+```mermaid
+flowchart TB
+    UI["Browser — POST /api/analyze (SSE)"]
+    RB{"resolve_backend"}
+    subgraph CopilotPath["copilot backend (subprocess)"]
+        MAT["Materialize workout / memory / library<br/>blobs → temp dir (--add-dir)"]
+        CPROC["copilot CLI subprocess<br/>needs CLI + auth in image"]
+    end
+    subgraph LocalPath["OpenAI-compatible backend"]
+        BUILD["Read activity + memory from store<br/>inline + thin JSON, memory digest"]
+        HTTP["POST /v1/chat/completions<br/>Ollama / LM Studio / custom base-url"]
+    end
+    Blob[("Azure Blob (store)")]
+    OUT["Stream deltas → browser (SSE)"]
+    SAVE["Save analysis → memory/"]
+
+    UI --> RB
+    RB -->|"copilot"| MAT
+    MAT -->|"read"| Blob
+    MAT --> CPROC --> OUT
+    RB -->|"ollama / lmstudio / base-url"| BUILD
+    BUILD -->|"read"| Blob
+    BUILD --> HTTP --> OUT
+    OUT --> SAVE -->|"conditional-create"| Blob
+```
+
 ---
 
 ## 5. Plan of work
 
 ### Phase 0 — Persistent planning doc
 - **`repo-plan-doc`** — Create this file (`docs/multi-user-sync.md`) with the full plan and
-  all five diagrams as the repo-tracked, editable source of truth. ✅ (this document)
+  all six diagrams as the repo-tracked, editable source of truth. ✅ (this document)
 
 ### Phase 1 — Storage abstraction (core)
 1. **`storage-interface`** — Define `ObjectStore` + `ObjectInfo` (key, etag, size,
@@ -304,9 +352,16 @@ sequenceDiagram
 
 ## 6. Notes / considerations
 
-- **Copilot backend needs real files.** The copilot analyzer takes `workout_paths`,
-  `memory_dir`, `library_dir` as **local paths**; with Blob these must be materialized to a
-  temp dir per request (documented trade-off; future: a replica-local read-through mirror).
+- **Copilot backend needs real files _and_ the CLI.** The copilot analyzer takes
+  `workout_paths`, `memory_dir`, `library_dir` as **local paths**; with Blob these must be
+  materialized to a temp dir per request (documented trade-off; future: a replica-local
+  read-through mirror). It also shells out to the `copilot` CLI, which is **not in the
+  container image today** (README: run analysis on a host) — to use it in ACA you'd install +
+  authenticate the CLI in the image; otherwise analyze should use an OpenAI-compatible endpoint.
+- **Local LLMs aren't `localhost` in ACA.** `ollama` / `lmstudio` default to
+  `http://localhost:11434|1234/v1`, which won't exist in the web container. Point the analyze
+  backend at a reachable OpenAI-compatible service (a dedicated model Container App, a sidecar,
+  or an external endpoint) via `--base-url` / config.
 - **`index.jsonl` append isn't concurrency-safe.** Prefer immutable per-entry `.md` blobs +
   a rebuildable index (or Append Blob) to avoid corruption across the job + web writers.
 - **TTL vs. freshness.** Client polling drives periodic refetch, so a ~10–15s index-list TTL
