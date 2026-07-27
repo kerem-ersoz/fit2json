@@ -38,7 +38,7 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def _stream_text(backend: str, prompt: str, model, reasoning_effort) -> Iterator[str]:
+def _stream_text(backend: str, prompt: str, model, reasoning_effort, athlete_profile=None) -> Iterator[str]:
     """Stream a model response for a prompt with no attached workout files."""
     if backend == "copilot":
         return analyzer.stream_copilot(
@@ -48,11 +48,13 @@ def _stream_text(backend: str, prompt: str, model, reasoning_effort) -> Iterator
             model=model,
             silent=True,
             reasoning_effort=reasoning_effort or None,
+            athlete_profile=athlete_profile,
         )
     if backend in analyzer.LOCAL_BACKENDS:
         url, key = analyzer.LOCAL_BACKENDS[backend]
         return analyzer.stream_openai_compatible(
-            prompt=prompt, workout_json="", base_url=url, api_key=key, memory_digest=None, model=model
+            prompt=prompt, workout_json="", base_url=url, api_key=key, memory_digest=None,
+            model=model, athlete_profile=athlete_profile,
         )
     raise ValueError(f"Unsupported analysis backend: {backend}")
 
@@ -99,6 +101,9 @@ def _freeform_event_gen(req: AnalyzeRequest, resolved: str) -> Iterator[str]:
     settings = get_settings()
     effective_prompt = req.prompt + analyzer.CHART_INSTRUCTIONS if req.charts else req.prompt
 
+    # Personal data from the "You" tab, injected so the model can personalize its analysis.
+    athlete_profile = services.get_profile_prompt()
+
     def build_stream() -> Iterator[str]:
         if resolved == "copilot":
             memory_dir = settings.memory_dir if settings.memory_dir.exists() else None
@@ -110,6 +115,7 @@ def _freeform_event_gen(req: AnalyzeRequest, resolved: str) -> Iterator[str]:
                 silent=True,
                 reasoning_effort=req.reasoning_effort or None,
                 library_dir=settings.library_dir,
+                athlete_profile=athlete_profile,
             )
         if resolved in analyzer.LOCAL_BACKENDS:
             url, key = analyzer.LOCAL_BACKENDS[resolved]
@@ -119,7 +125,7 @@ def _freeform_event_gen(req: AnalyzeRequest, resolved: str) -> Iterator[str]:
             )
             return analyzer.stream_openai_compatible(
                 prompt=effective_prompt, workout_json=index, base_url=url, api_key=key,
-                memory_digest=None, model=req.model,
+                memory_digest=None, model=req.model, athlete_profile=athlete_profile,
             )
         raise ValueError(f"Unsupported analysis backend: {resolved}")
 
@@ -141,6 +147,9 @@ def _single_event_gen(req: AnalyzeRequest, resolved: str, found_one) -> Iterator
     # The model gets chart guidance appended (web only); memory keeps the original prompt.
     effective_prompt = req.prompt + analyzer.CHART_INSTRUCTIONS if req.charts else req.prompt
 
+    # Personal data from the "You" tab, injected so the model can personalize its analysis.
+    athlete_profile = services.get_profile_prompt()
+
     store = None
     if not req.no_memory:
         store = MemoryStore(get_settings().memory_dir)
@@ -155,6 +164,7 @@ def _single_event_gen(req: AnalyzeRequest, resolved: str, found_one) -> Iterator
                 model=req.model,
                 silent=True,
                 reasoning_effort=req.reasoning_effort,
+                athlete_profile=athlete_profile,
             )
         if resolved in analyzer.LOCAL_BACKENDS:
             url, key = analyzer.LOCAL_BACKENDS[resolved]
@@ -170,6 +180,7 @@ def _single_event_gen(req: AnalyzeRequest, resolved: str, found_one) -> Iterator
                 api_key=key,
                 memory_digest=digest,
                 model=req.model,
+                athlete_profile=athlete_profile,
             )
         raise ValueError(f"Unsupported analysis backend: {resolved}")
 
@@ -230,10 +241,13 @@ def _multi_event_gen(req: AnalyzeRequest, resolved: str, found, ids: List[str]) 
     synth = _synthesis_prompt(blocks, req.prompt)
     if req.charts:
         synth = synth + analyzer.CHART_INSTRUCTIONS
+    # Personalize the synthesis (the step that answers the athlete's request) with the
+    # "You" profile. The per-workout MAP analyses stay profile-free so they remain reusable.
+    athlete_profile = services.get_profile_prompt()
     yield _sse("reduce", {"count": total})
     chunks: List[str] = []
     try:
-        for chunk in _stream_text(resolved, synth, req.model, req.reasoning_effort):
+        for chunk in _stream_text(resolved, synth, req.model, req.reasoning_effort, athlete_profile):
             chunks.append(chunk)
             yield _sse("delta", {"text": chunk})
     except Exception as exc:

@@ -19,6 +19,7 @@ from fit2json.memory import MemoryStore, _session_metrics
 from fit2json.memory import activity_id as memory_activity_id
 from fit2json.models import DecodedActivity
 from fit2json.output import activity_filename
+from fit2json.profile import load_profile, save_profile
 from fit2json.web import streams as streams_mod
 from fit2json.web.config import get_settings
 
@@ -686,6 +687,26 @@ def _all_memory_entries() -> List[Dict[str, Any]]:
             if parsed and parsed.get("entry_id") and parsed["entry_id"] not in by_id:
                 by_id[parsed["entry_id"]] = parsed
     return list(by_id.values())
+
+
+# ── athlete profile ──────────────────────────────────────────────────────────
+
+
+def get_profile() -> Dict[str, Any]:
+    """The saved athlete profile (empty dict when unset)."""
+    return load_profile(get_settings().profile_path)
+
+
+def update_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist the athlete profile and return the cleaned, stored version."""
+    return save_profile(get_settings().profile_path, profile)
+
+
+def get_profile_prompt() -> Optional[str]:
+    """Render the saved profile as a prompt block, or None when nothing is set."""
+    from fit2json.profile import format_profile_prompt
+
+    return format_profile_prompt(get_profile()) or None
 
 
 # ── ingest (upload / fetch) ──────────────────────────────────────────────────

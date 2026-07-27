@@ -81,6 +81,52 @@ class TestAnalyze:
         entries = [json.loads(l) for l in (memdir / "index.jsonl").read_text().splitlines() if l.strip()]
         assert entries and entries[0]["sport"] == "running"
 
+    def test_analyze_injects_profile(self, tmp_path, monkeypatch):
+        workout = tmp_path / "w.json"
+        runner.invoke(cli, ["convert", FIXTURE, "-o", str(workout)])
+
+        captured = {}
+        monkeypatch.setattr(
+            analyzer, "run_openai_compatible",
+            lambda **kw: captured.update(kw) or "MOCK OK",
+        )
+
+        profile = tmp_path / "profile.json"
+        profile.write_text(json.dumps({"max_hr": 190, "goals": "Sub-3 marathon"}), encoding="utf-8")
+
+        result = runner.invoke(
+            cli,
+            ["analyze", str(workout), "-p", "Coach me",
+             "--base-url", "http://x/v1", "--memory", str(tmp_path / "m"),
+             "--profile", str(profile)],
+        )
+        assert result.exit_code == 0, result.output
+        assert captured["athlete_profile"] is not None
+        assert "Max HR: 190 bpm" in captured["athlete_profile"]
+        assert "Sub-3 marathon" in captured["athlete_profile"]
+
+    def test_analyze_no_profile_flag(self, tmp_path, monkeypatch):
+        workout = tmp_path / "w.json"
+        runner.invoke(cli, ["convert", FIXTURE, "-o", str(workout)])
+
+        captured = {}
+        monkeypatch.setattr(
+            analyzer, "run_openai_compatible",
+            lambda **kw: captured.update(kw) or "MOCK OK",
+        )
+
+        profile = tmp_path / "profile.json"
+        profile.write_text(json.dumps({"max_hr": 190}), encoding="utf-8")
+
+        result = runner.invoke(
+            cli,
+            ["analyze", str(workout), "-p", "Coach me",
+             "--base-url", "http://x/v1", "--memory", str(tmp_path / "m"),
+             "--profile", str(profile), "--no-profile"],
+        )
+        assert result.exit_code == 0, result.output
+        assert captured["athlete_profile"] is None
+
 
 class TestMemoryCommands:
     def test_memory_list_empty(self, tmp_path):

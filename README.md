@@ -285,11 +285,15 @@ fit2json convert run.fit | fit2json analyze -p "Race report"
 | `--recall {auto,same-sport,all,none}` | Which past analyses to recall as context (default: `auto`). |
 | `--recall-days INT` | Only recall memories within N days. |
 | `--recall-limit INT` | Max memories to recall (default: 8). |
+| `--profile PATH` | Athlete-profile JSON to personalize the analysis (default: `~/.fit2json/profile.json`). |
+| `--no-profile` | Ignore the saved athlete profile for this run. |
 
 **How backends handle data:**
 
 - **`copilot`** — the workout file(s) and the memory directory are passed **by path**; Copilot reads them with its own file tools, so even huge lossless files fit fine.
 - **`ollama` / `lmstudio` / `--base-url`** — the workout JSON is inlined and automatically **thinned** to fit `--max-chars`; recalled memories are added as a compact digest.
+
+**Personalization (the "You" profile):** if an athlete profile exists (height, weight, resting/max HR, LTHR, FTP, VO₂max, goals, …), a compact summary is injected into every analysis so the model can reason about your HR/power zones, calories, effort, and pacing. Edit it on the **You** tab of the web UI (`fit2json serve`), or point `--profile` at any profile JSON. Use `--no-profile` to opt out.
 
 ### `fit2json memory`
 
