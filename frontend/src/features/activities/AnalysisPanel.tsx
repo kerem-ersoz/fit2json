@@ -5,6 +5,7 @@ import { api, streamAnalyze } from '../../lib/api'
 import { Button } from '../../components/ui/Button'
 import { Card, CardBody } from '../../components/ui/Card'
 import { MarkdownView } from '../../components/ui/Markdown'
+import { AnalysisView } from './AnalysisView'
 import { formatDateTime } from '../../lib/format'
 
 const SUGGESTIONS = [
@@ -23,6 +24,15 @@ function backendOptions(copilot: boolean) {
   return opts
 }
 
+// Copilot CLI reasoning effort. '' = leave the model/CLI default untouched.
+const EFFORT_OPTIONS = [
+  { v: '', label: 'Reasoning: default' },
+  { v: 'low', label: 'Reasoning: low' },
+  { v: 'medium', label: 'Reasoning: medium' },
+  { v: 'high', label: 'Reasoning: high' },
+  { v: 'max', label: 'Reasoning: max' },
+]
+
 export function AnalysisPanel({ activityId }: { activityId: string }) {
   const queryClient = useQueryClient()
   const { data: config } = useQuery({ queryKey: ['config'], queryFn: api.config })
@@ -33,16 +43,30 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
 
   const [prompt, setPrompt] = useState('')
   const [backend, setBackend] = useState<string>('')
+  const [effort, setEffort] = useState<string>('')
   const [running, setRunning] = useState(false)
   const [output, setOutput] = useState('')
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const sectionRef = useRef<HTMLElement>(null)
+  const promptRef = useRef<HTMLTextAreaElement>(null)
+  const [openIds, setOpenIds] = useState<Set<string>>(new Set())
+  const seenNewestRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!backend && config?.backends.default) setBackend(config.backends.default)
   }, [config, backend])
 
   useEffect(() => () => abortRef.current?.abort(), [])
+
+  // Deep-link from the Analyze page: scroll to the panel and focus the prompt.
+  useEffect(() => {
+    if (typeof window === 'undefined' || window.location.hash !== '#analyze-panel') return
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    sectionRef.current?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+    const t = window.setTimeout(() => promptRef.current?.focus(), reduce ? 0 : 300)
+    return () => window.clearTimeout(t)
+  }, [])
 
   const run = async () => {
     if (!prompt.trim() || running) return
@@ -52,7 +76,12 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
     const controller = new AbortController()
     abortRef.current = controller
     await streamAnalyze(
-      { activity_id: activityId, prompt, backend: backend || undefined },
+      {
+        activity_id: activityId,
+        prompt,
+        backend: backend || undefined,
+        reasoning_effort: backend === 'copilot' && effort ? effort : undefined,
+      },
       {
         onDelta: (text) => setOutput((o) => o + text),
         onDone: (info) => {
@@ -79,30 +108,59 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
   const options = backendOptions(config?.backends.copilot ?? false)
   const past = analysesQ.data?.analyses ?? []
 
+  // Auto-expand the most recent analysis on open (and whenever a newer one is saved);
+  // older ones stay collapsed.
+  const newestId = past[0]?.entry_id
+  useEffect(() => {
+    if (newestId && seenNewestRef.current !== newestId) {
+      seenNewestRef.current = newestId
+      setOpenIds((prev) => new Set(prev).add(newestId))
+    }
+  }, [newestId])
+
   return (
-    <section className="space-y-4">
+    <section ref={sectionRef} id="analyze-panel" className="space-y-4">
       <Card>
         <CardBody className="space-y-3">
           <div className="flex items-center justify-between gap-3">
             <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900">
               <Sparkles className="h-5 w-5 text-brand-600" /> Analyze this workout
             </h2>
-            <select
-              value={backend}
-              onChange={(e) => setBackend(e.target.value)}
-              disabled={running}
-              className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-              aria-label="Analysis backend"
-            >
-              {options.map((o) => (
-                <option key={o.v} value={o.v}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center gap-2">
+              {backend === 'copilot' && (
+                <select
+                  value={effort}
+                  onChange={(e) => setEffort(e.target.value)}
+                  disabled={running}
+                  className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  aria-label="Reasoning effort"
+                  title="Copilot reasoning effort. Higher = deeper, more thorough analysis."
+                >
+                  {EFFORT_OPTIONS.map((o) => (
+                    <option key={o.v} value={o.v}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <select
+                value={backend}
+                onChange={(e) => setBackend(e.target.value)}
+                disabled={running}
+                className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                aria-label="Analysis backend"
+              >
+                {options.map((o) => (
+                  <option key={o.v} value={o.v}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <textarea
+            ref={promptRef}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             placeholder="Ask a coaching question about this workout…"
@@ -172,7 +230,20 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
         ) : (
           <div className="space-y-2">
             {past.map((a) => (
-              <details key={a.entry_id} className="group rounded-xl border border-slate-200 bg-white">
+              <details
+                key={a.entry_id}
+                open={openIds.has(a.entry_id)}
+                onToggle={(e) => {
+                  const open = e.currentTarget.open
+                  setOpenIds((prev) => {
+                    const next = new Set(prev)
+                    if (open) next.add(a.entry_id)
+                    else next.delete(a.entry_id)
+                    return next
+                  })
+                }}
+                className="group rounded-xl border border-slate-200 bg-white"
+              >
                 <summary className="flex cursor-pointer items-center justify-between gap-3 p-4 text-sm">
                   <span className="min-w-0 flex-1 truncate font-medium text-slate-800">
                     {a.prompt || 'Analysis'}
@@ -182,11 +253,11 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
                   </span>
                 </summary>
                 <div className="border-t border-slate-100 p-4">
-                  <div className="mb-2 text-xs text-slate-400">
-                    {a.backend}
-                    {a.model ? ` · ${a.model}` : ''}
-                  </div>
-                  <MarkdownView>{a.content ?? ''}</MarkdownView>
+                  <AnalysisView
+                    content={a.content ?? ''}
+                    prompt={a.prompt}
+                    meta={`${a.backend}${a.model ? ` · ${a.model}` : ''}`}
+                  />
                 </div>
               </details>
             ))}

@@ -256,7 +256,10 @@ fit2json analyze run.json -p "Write a race report"
 # Explicit backends
 fit2json analyze run.json -p "Analyze my HR zones" --backend ollama --model llama3.1
 fit2json analyze run.json -p "Any red flags?"       --backend lmstudio
-fit2json analyze run.json -p "Coach me"             --backend copilot --model auto
+fit2json analyze run.json -p "Coach me"             --backend copilot
+
+# Copilot: pick a specific model and crank up reasoning for a deeper breakdown
+fit2json analyze run.json -p "Coach me" --backend copilot --model claude-opus-4.8 --reasoning-effort max
 
 # Any OpenAI-compatible endpoint
 fit2json analyze run.json -p "Summarize" --base-url http://my-server:8080/v1
@@ -272,7 +275,8 @@ fit2json convert run.fit | fit2json analyze -p "Race report"
 | `-p, --prompt TEXT` | **(Required)** Your analysis question. |
 | `--backend` | `copilot`, `ollama`, or `lmstudio`. Auto-detected if omitted. |
 | `--base-url TEXT` | Any OpenAI-compatible endpoint (overrides `--backend`). |
-| `--model TEXT` | Model name (backend-specific; local backends auto-pick if omitted). |
+| `--model TEXT` | Model name (backend-specific). For `copilot`, omit to use the Copilot CLI's configured default model; pass e.g. `claude-opus-4.8` to force one. Local backends auto-pick if omitted. |
+| `--reasoning-effort {none,minimal,low,medium,high,xhigh,max}` | Copilot backend only: how hard the model reasons. Needs an explicit `--model` (the `auto` router rejects it). |
 | `--api-key TEXT` | Only for a custom `--base-url` that requires auth. |
 | `--no-stream` | Disable streaming output. |
 | `--max-chars INT` | Max workout JSON chars inlined for local models (default: 200K). Large activities are auto-thinned to fit. |

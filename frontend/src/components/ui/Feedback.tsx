@@ -1,5 +1,7 @@
-import { Loader2 } from 'lucide-react'
+import { AlertCircle, Loader2, RefreshCw } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { clsx } from 'clsx'
+import { Button } from './Button'
 
 export function Spinner({ className }: { className?: string }) {
   return <Loader2 className={clsx('animate-spin text-brand-600', className)} />
@@ -14,10 +16,30 @@ export function LoadingState({ label = 'Loading…' }: { label?: string }) {
   )
 }
 
-export function ErrorState({ message }: { message: string }) {
+export function ErrorState({
+  message,
+  hint,
+  onRetry,
+}: {
+  message: string
+  hint?: string
+  onRetry?: () => void
+}) {
   return (
-    <div className="mx-auto max-w-md rounded-xl border border-red-200 bg-red-50 p-4 text-center text-sm text-red-700">
-      {message}
+    <div
+      role="alert"
+      className="mx-auto max-w-md rounded-xl border border-red-200 bg-red-50 p-5 text-center"
+    >
+      <AlertCircle className="mx-auto mb-2 h-6 w-6 text-red-600" aria-hidden />
+      <p className="text-sm font-medium text-red-800">{message}</p>
+      {hint && <p className="mx-auto mt-1 max-w-xs text-sm text-red-700">{hint}</p>}
+      {onRetry && (
+        <div className="mt-4 flex justify-center">
+          <Button variant="secondary" onClick={onRetry}>
+            <RefreshCw className="h-4 w-4" /> Try again
+          </Button>
+        </div>
+      )}
     </div>
   )
 }
@@ -26,16 +48,19 @@ export function EmptyState({
   title,
   hint,
   icon,
+  action,
 }: {
   title: string
   hint?: string
-  icon?: React.ReactNode
+  icon?: ReactNode
+  action?: ReactNode
 }) {
   return (
     <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-slate-500">
       {icon}
       <p className="text-base font-medium text-slate-700">{title}</p>
       {hint && <p className="max-w-sm text-sm">{hint}</p>}
+      {action && <div className="mt-3">{action}</div>}
     </div>
   )
 }

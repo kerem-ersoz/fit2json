@@ -357,6 +357,217 @@ def get_activity_for_analysis(activity_id: str) -> Optional[Tuple[DecodedActivit
     return act, loc.path
 
 
+def get_activities_for_analysis(
+    activity_ids: List[str],
+) -> Optional[List[Tuple[DecodedActivity, Path]]]:
+    """Resolve several activities (decoded + on-disk path). Returns None if any id is unknown."""
+    lib = get_library()
+    resolved: List[Tuple[DecodedActivity, Path]] = []
+    for activity_id in activity_ids:
+        loc = lib.locate(activity_id)
+        act = lib.get(activity_id)
+        if act is None or loc is None:
+            return None
+        resolved.append((act, loc.path))
+    return resolved
+
+
+# A fixed prompt for per-workout building-block analyses, so reused blocks are consistent.
+CANONICAL_WORKOUT_PROMPT = (
+    "Analyze this single workout: summarize pacing, heart-rate/power zones, effort "
+    "distribution, and overall execution, with the key numbers. Be concise and factual — "
+    "this will be reused as a building block when comparing several workouts. Output only "
+    "the analysis itself, with no preamble."
+)
+
+
+def analysis_tier(
+    backend: Optional[str], model: Optional[str], reasoning_effort: Optional[str]
+) -> str:
+    """Signature of the model/effort tier that produced an analysis.
+
+    Building blocks fed into one synthesis must share a tier, so a weak-model analysis is
+    never combined with a powerful-model one. 'auto' and an unset model are the same tier.
+    """
+    model_norm = (model or "").strip().lower()
+    if model_norm == "auto":
+        model_norm = ""
+    return "|".join(
+        [
+            (backend or "").strip().lower(),
+            model_norm,
+            (reasoning_effort or "").strip().lower(),
+        ]
+    )
+
+
+def available_models(backend: str) -> Dict[str, Any]:
+    """Selectable models + reasoning-effort levels for a backend.
+
+    - copilot: no list API, so offer 'auto' plus the models actually used before (from the
+      memory corpus) and allow a custom entry; efforts come from the installed CLI.
+    - ollama / lmstudio: live from the OpenAI-compatible ``/v1/models`` endpoint; no efforts.
+    """
+    from fit2json import analyzer
+
+    b = (backend or "").strip().lower()
+    if b == "copilot":
+        seen: List[str] = []
+        for entry in _all_memory_entries():
+            if (entry.get("backend") or "").strip().lower() != "copilot":
+                continue
+            model = (entry.get("model") or "").strip()
+            if model and model.lower() != "auto" and model not in seen:
+                seen.append(model)
+        seen.sort()
+        return {
+            "backend": "copilot",
+            "models": ["auto", *seen],
+            "efforts": analyzer.copilot_reasoning_efforts(),
+            "allow_custom": True,
+            "reachable": analyzer.copilot_available(),
+        }
+    if b in analyzer.LOCAL_BACKENDS:
+        url, key = analyzer.LOCAL_BACKENDS[b]
+        models: List[str] = []
+        reachable = False
+        try:
+            client = analyzer._make_client(url, key)
+            data = list(getattr(client.models.list(), "data", []) or [])
+            models = [d.id for d in data if getattr(d, "id", None)]
+            reachable = True
+        except Exception:
+            reachable = False
+        return {
+            "backend": b,
+            "models": models,
+            "efforts": [],
+            "allow_custom": True,
+            "reachable": reachable,
+        }
+    return {"backend": b, "models": [], "efforts": [], "allow_custom": True, "reachable": False}
+
+
+def _raw_analyses_for(activity_id: str) -> List[Dict[str, Any]]:
+    """Raw memory entries saved for one activity, newest first."""
+    act = get_library().get(activity_id)
+    if act is None:
+        return []
+    aid = memory_activity_id(act)
+    src = act.source_file
+    entries = [
+        e
+        for e in _all_memory_entries()
+        if e.get("source_file") == src or e.get("activity_id") == aid
+    ]
+    entries.sort(key=lambda e: e.get("created_at") or "", reverse=True)
+    return entries
+
+
+def latest_compatible_analysis(
+    activity_id: str,
+    backend: str,
+    model: Optional[str],
+    reasoning_effort: Optional[str],
+    prompt: Optional[str] = None,
+) -> Optional[str]:
+    """Body of the newest saved analysis for this activity at a matching tier (and prompt).
+
+    Building blocks must be homogeneous, so reuse requires the same model/effort tier and,
+    when a specific building-block prompt is in play, the same prompt.
+    """
+    target = analysis_tier(backend, model, reasoning_effort)
+    store = _memory_store()
+    for entry in _raw_analyses_for(activity_id):
+        if analysis_tier(entry.get("backend"), entry.get("model"), entry.get("reasoning_effort")) != target:
+            continue
+        if prompt is not None and (entry.get("prompt") or "") != prompt:
+            continue
+        body = (store._entry_body(entry) or "").strip()
+        if body:
+            return body
+    return None
+
+
+def generate_workout_analysis(
+    activity: DecodedActivity,
+    path: Path,
+    backend: str,
+    model: Optional[str],
+    reasoning_effort: Optional[str],
+    prompt: Optional[str] = None,
+    save: bool = True,
+) -> str:
+    """Run a concise single-workout analysis and (optionally) persist it as a memory building block."""
+    from fit2json import analyzer
+
+    workout_prompt = prompt or CANONICAL_WORKOUT_PROMPT
+
+    if backend == "copilot":
+        text = "".join(
+            analyzer.stream_copilot(
+                prompt=workout_prompt,
+                workout_paths=[path],
+                memory_dir=None,
+                model=model,
+                silent=True,
+                reasoning_effort=reasoning_effort or None,
+            )
+        )
+    elif backend in analyzer.LOCAL_BACKENDS:
+        url, key = analyzer.LOCAL_BACKENDS[backend]
+        workout_json = json.dumps({"activities": [activity.to_dict()]}, ensure_ascii=False)
+        text = "".join(
+            analyzer.stream_openai_compatible(
+                prompt=workout_prompt,
+                workout_json=workout_json,
+                base_url=url,
+                api_key=key,
+                memory_digest=None,
+                model=model,
+            )
+        )
+    else:
+        raise ValueError(f"Unsupported analysis backend: {backend}")
+
+    text = (text or "").strip()
+    if save and text:
+        store = _memory_store()
+        store.root.mkdir(parents=True, exist_ok=True)
+        try:
+            store.record(
+                activity,
+                workout_prompt,
+                text,
+                backend=backend,
+                model=model or "",
+                reasoning_effort=reasoning_effort or "",
+            )
+        except Exception:
+            pass
+    return text
+
+
+def activity_index(limit: int = 200) -> str:
+    """Compact one-line-per-workout index (for local backends in freeform mode)."""
+    lines = []
+    for s in list_activities()[:limit]:
+        m = s.get("metrics") or {}
+        parts = [
+            s.get("id", ""),
+            s.get("sport") or "activity",
+            (s.get("start_time") or "")[:10],
+        ]
+        if m.get("distance_m"):
+            parts.append(f"{round(m['distance_m'] / 1000, 2)}km")
+        if m.get("duration_s"):
+            parts.append(f"{round(m['duration_s'] / 60)}min")
+        if m.get("avg_hr"):
+            parts.append(f"{round(m['avg_hr'])}bpm")
+        lines.append(" · ".join(str(p) for p in parts if p))
+    return "\n".join(lines)
+
+
 def _entry_view(store: MemoryStore, entry: Dict[str, Any], with_body: bool) -> Dict[str, Any]:
     view = {
         "entry_id": entry.get("entry_id"),

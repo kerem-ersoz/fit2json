@@ -6,7 +6,7 @@ dicts since their shape mirrors the FIT data itself.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -32,13 +32,21 @@ class Config(BaseModel):
     library_dir: str
     memory_dir: str
     base_path: str
+    workout_prompt_default: str
 
 
 class AnalyzeRequest(BaseModel):
-    activity_id: str
+    # One of activity_id / activity_ids is required. activity_ids enables analyzing
+    # several workouts together (comparisons, weekly reviews); activity_id is kept for
+    # back-compat with the single-workout detail panel.
+    activity_id: Optional[str] = None
+    activity_ids: Optional[List[str]] = None
     prompt: str
+    # Overrides the per-workout building-block prompt used by the multi-workout map step.
+    workout_prompt: Optional[str] = None
     backend: Optional[str] = None
     model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
     recall: str = "auto"
     recall_days: Optional[int] = None
     recall_limit: int = 8
