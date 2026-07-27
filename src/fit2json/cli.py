@@ -280,14 +280,18 @@ def fetch_strava(days, output_path, gzip_out, client_id, client_secret, refresh_
               default="auto", help="Which past memories to recall as context.")
 @click.option("--recall-days", type=int, default=None, help="Only recall memories within N days.")
 @click.option("--recall-limit", type=int, default=8, help="Max memories to recall (default: 8).")
+@click.option("--profile", "profile_path", default=None,
+              help="Athlete-profile JSON (default: ~/.fit2json/profile.json). Personalizes the analysis.")
+@click.option("--no-profile", is_flag=True, help="Ignore the saved athlete profile.")
 def analyze(source, prompt, backend, base_url, model, reasoning_effort, api_key, no_stream, max_chars,
-            memory_dir, no_memory, recall, recall_days, recall_limit):
+            memory_dir, no_memory, recall, recall_days, recall_limit, profile_path, no_profile):
     """Analyze workout JSON with an LLM, using and updating training memory.
 
     SOURCE is a workout JSON file or a directory of them. If omitted, JSON is read
     from stdin (e.g. piped from `fit2json convert`).
     """
     from fit2json import analyzer
+    from fit2json import profile as profile_mod
     from fit2json.memory import DEFAULT_MEMORY_DIR, MemoryStore
     from fit2json.output import activities_from_obj, load_activities
 
@@ -330,6 +334,12 @@ def analyze(source, prompt, backend, base_url, model, reasoning_effort, api_key,
 
     resolved = analyzer.resolve_backend(backend, base_url)
 
+    # Athlete profile (from the "You" tab / profile.json) personalizes the analysis.
+    athlete_profile: Optional[str] = None
+    if not no_profile:
+        ppath = Path(profile_path).expanduser() if profile_path else profile_mod.default_profile_path()
+        athlete_profile = profile_mod.format_profile_prompt(profile_mod.load_profile(ppath)) or None
+
     # 3) Run the chosen backend.
     if resolved == "copilot":
         # Copilot reads files itself; give it the workout(s) + memory dir by path.
@@ -344,6 +354,7 @@ def analyze(source, prompt, backend, base_url, model, reasoning_effort, api_key,
             model=model,
             stream=not no_stream,
             reasoning_effort=reasoning_effort,
+            athlete_profile=athlete_profile,
         )
     else:
         if base_url:
@@ -372,6 +383,7 @@ def analyze(source, prompt, backend, base_url, model, reasoning_effort, api_key,
             model=model,
             stream=not no_stream,
             max_chars=max_chars,
+            athlete_profile=athlete_profile,
         )
 
     # 4) Record memory.

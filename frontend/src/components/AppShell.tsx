@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { clsx } from 'clsx'
-import { Brain, History, ListChecks, Upload, type LucideIcon } from 'lucide-react'
+import { Brain, History, ListChecks, Upload, User, type LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { api } from '../lib/api'
 import { useUnits } from '../lib/units'
@@ -18,6 +18,7 @@ const NAV: NavItem[] = [
   { to: '/analyze', label: 'Analyze', Icon: Brain },
   { to: '/memory', label: 'Memory', Icon: History },
   { to: '/ingest', label: 'Add', Icon: Upload },
+  { to: '/you', label: 'You', Icon: User },
 ]
 
 function BrandMark({ compact = false }: { compact?: boolean }) {
@@ -109,7 +110,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       {/* Mobile bottom tab bar */}
       <nav
-        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-slate-200 bg-white/95 backdrop-blur lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-slate-200 bg-white/95 backdrop-blur lg:hidden"
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
         {NAV.map(({ to, label, Icon, end }) => (

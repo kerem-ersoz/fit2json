@@ -43,6 +43,9 @@ def analyze(req: AnalyzeRequest):
     if req.charts:
         effective_prompt = req.prompt + analyzer.CHART_INSTRUCTIONS
 
+    # Personal data from the "You" tab, injected so the model can personalize its analysis.
+    athlete_profile = services.get_profile_prompt()
+
     store = None
     if not req.no_memory:
         store = MemoryStore(get_settings().memory_dir)
@@ -56,6 +59,7 @@ def analyze(req: AnalyzeRequest):
                 memory_dir=(store.root if store else None),
                 model=req.model,
                 silent=True,
+                athlete_profile=athlete_profile,
             )
         if resolved in analyzer.LOCAL_BACKENDS:
             url, key = analyzer.LOCAL_BACKENDS[resolved]
@@ -73,6 +77,7 @@ def analyze(req: AnalyzeRequest):
                 api_key=key,
                 memory_digest=digest,
                 model=req.model,
+                athlete_profile=athlete_profile,
             )
         raise ValueError(f"Unsupported analysis backend: {resolved}")
 

@@ -20,6 +20,7 @@ def client(tmp_path, monkeypatch):
 
     monkeypatch.setenv("FITSIFT_LIBRARY", str(library))
     monkeypatch.setenv("FITSIFT_MEMORY", str(tmp_path / "memory"))
+    monkeypatch.setenv("FITSIFT_PROFILE", str(tmp_path / "profile.json"))
 
     # Rebuild the app + service caches against the patched environment.
     from fit2json.web import app as app_module
@@ -122,7 +123,8 @@ def test_analyze_streams_and_saves(client, monkeypatch):
 
     monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
 
-    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False):
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False,
+                    athlete_profile=None):
         assert workout_paths and workout_paths[0].exists()
         assert silent is True  # web path uses --silent to strip the copilot tool-trace
         yield "## Analysis\n"
@@ -160,7 +162,8 @@ def test_analyze_appends_chart_guidance(client, monkeypatch):
     monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
     captured: dict = {}
 
-    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False):
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False,
+                    athlete_profile=None):
         captured["prompt"] = prompt
         yield "ok"
 
@@ -182,7 +185,8 @@ def test_analyze_charts_can_be_disabled(client, monkeypatch):
     monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
     captured: dict = {}
 
-    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False):
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False,
+                    athlete_profile=None):
         captured["prompt"] = prompt
         yield "ok"
 
@@ -196,6 +200,120 @@ def test_analyze_charts_can_be_disabled(client, monkeypatch):
     assert "fitsift-chart" not in captured["prompt"]
 
 
+# ── athlete profile ("You" tab) ──────────────────────────────────────────────
+
+
+def test_profile_defaults_empty(client):
+    body = client.get("/api/profile").json()
+    # Every field present but null until the athlete configures it.
+    assert body["height_cm"] is None
+    assert body["max_hr"] is None
+    assert body["goals"] is None
+
+
+def test_profile_put_and_get_roundtrip(client):
+    payload = {
+        "name": "Sam",
+        "sex": "female",
+        "birth_year": 1992,
+        "height_cm": 170,
+        "weight_kg": 62.5,
+        "resting_hr": 46,
+        "max_hr": 188,
+        "lactate_threshold_hr": 170,
+        "ftp_w": 240,
+        "vo2max": 58.0,
+        "goals": "Run a sub-40 10k",
+    }
+    r = client.put("/api/profile", json=payload)
+    assert r.status_code == 200
+    saved = r.json()
+    assert saved["name"] == "Sam"
+    assert saved["weight_kg"] == 62.5
+
+    # Persisted across requests (read back from disk).
+    again = client.get("/api/profile").json()
+    assert again["max_hr"] == 188
+    assert again["goals"] == "Run a sub-40 10k"
+
+
+def test_profile_put_partial_clears_unset(client):
+    client.put("/api/profile", json={"height_cm": 180, "max_hr": 190})
+    # A subsequent save with only some fields does not retain the old ones.
+    client.put("/api/profile", json={"weight_kg": 70})
+    body = client.get("/api/profile").json()
+    assert body["weight_kg"] == 70
+    assert body["height_cm"] is None
+    assert body["max_hr"] is None
+
+
+def test_profile_rejects_out_of_range(client):
+    r = client.put("/api/profile", json={"max_hr": 999})
+    assert r.status_code == 422
+
+
+def test_profile_get_tolerates_bad_on_disk_value(client):
+    """A hand-edited profile.json with an out-of-range value must not 500 the GET."""
+    import json
+    import os
+    from pathlib import Path
+
+    path = Path(os.environ["FITSIFT_PROFILE"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"height_cm": 400, "max_hr": 190}), encoding="utf-8")
+
+    r = client.get("/api/profile")
+    assert r.status_code == 200
+    body = r.json()
+    # The offending field is dropped; the valid one survives.
+    assert body["height_cm"] is None
+    assert body["max_hr"] == 190
+
+
+def test_analyze_injects_profile(client, monkeypatch):
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+    captured: dict = {}
+
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False,
+                    athlete_profile=None):
+        captured["prompt"] = prompt
+        captured["athlete_profile"] = athlete_profile
+        yield "ok"
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+
+    client.put("/api/profile", json={"max_hr": 190, "weight_kg": 72, "goals": "Sub-3 marathon"})
+
+    aid = client.get("/api/activities").json()[0]["id"]
+    r = client.post("/api/analyze", json={"activity_id": aid, "prompt": "Coach me"})
+    assert r.status_code == 200
+    profile_block = captured["athlete_profile"]
+    assert profile_block is not None
+    assert "Max HR: 190 bpm" in profile_block
+    assert "Sub-3 marathon" in profile_block
+
+
+def test_analyze_without_profile_passes_none(client, monkeypatch):
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+    captured: dict = {}
+
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False,
+                    athlete_profile=None):
+        captured["athlete_profile"] = athlete_profile
+        yield "ok"
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+
+    aid = client.get("/api/activities").json()[0]["id"]
+    r = client.post("/api/analyze", json={"activity_id": aid, "prompt": "Coach me"})
+    assert r.status_code == 200
+    assert captured["athlete_profile"] is None
+
+
 @pytest.fixture()
 def empty_client(tmp_path, monkeypatch):
     """A TestClient wired to an empty library (for ingest tests)."""
@@ -203,6 +321,7 @@ def empty_client(tmp_path, monkeypatch):
     library.mkdir()
     monkeypatch.setenv("FITSIFT_LIBRARY", str(library))
     monkeypatch.setenv("FITSIFT_MEMORY", str(tmp_path / "memory"))
+    monkeypatch.setenv("FITSIFT_PROFILE", str(tmp_path / "profile.json"))
 
     from fit2json.web import app as app_module
     from fit2json.web import services

@@ -80,8 +80,11 @@ def _build_copilot_prompt(
     prompt: str,
     workout_paths: List[Path],
     memory_dir: Optional[Path],
+    athlete_profile: Optional[str] = None,
 ) -> str:
     lines = [SYSTEM_PROMPT, ""]
+    if athlete_profile:
+        lines += [athlete_profile, ""]
     if workout_paths:
         lines.append("Workout data to analyze (lossless FIT JSON), read these files:")
         lines += [f"  - {p}" for p in workout_paths]
@@ -107,6 +110,7 @@ def run_copilot(
     stream: bool = True,
     silent: bool = True,
     reasoning_effort: Optional[str] = None,
+    athlete_profile: Optional[str] = None,
 ) -> str:
     """Run analysis via the GitHub Copilot CLI subprocess.
 
@@ -115,7 +119,13 @@ def run_copilot(
     """
     chunks: List[str] = []
     for chunk in stream_copilot(
-        prompt, workout_paths, memory_dir, model, silent=silent, reasoning_effort=reasoning_effort
+        prompt,
+        workout_paths,
+        memory_dir,
+        model,
+        silent=silent,
+        reasoning_effort=reasoning_effort,
+        athlete_profile=athlete_profile,
     ):
         chunks.append(chunk)
         if stream:
@@ -131,6 +141,7 @@ def stream_copilot(
     model: Optional[str] = None,
     silent: bool = True,
     reasoning_effort: Optional[str] = None,
+    athlete_profile: Optional[str] = None,
 ) -> Iterator[str]:
     """Yield analysis text chunks from the GitHub Copilot CLI subprocess.
 
@@ -147,7 +158,7 @@ def stream_copilot(
             "--backend ollama|lmstudio (or --base-url) for a local model."
         )
 
-    full_prompt = _build_copilot_prompt(prompt, workout_paths, memory_dir)
+    full_prompt = _build_copilot_prompt(prompt, workout_paths, memory_dir, athlete_profile)
 
     cmd = [
         "copilot",
@@ -206,11 +217,14 @@ def _build_openai_messages(
     workout_json: str,
     memory_digest: Optional[str],
     max_chars: int,
+    athlete_profile: Optional[str] = None,
 ) -> "List[ChatCompletionMessageParam]":
     """Build the system+user chat messages, compacting the workout JSON to fit."""
     workout_json = compact_workout_json(workout_json, max_chars)
 
     user_parts = []
+    if athlete_profile:
+        user_parts.append(athlete_profile)
     if memory_digest:
         user_parts.append(
             "Prior workout analyses (memory, for trend context):\n" + memory_digest
@@ -233,11 +247,12 @@ def stream_openai_compatible(
     memory_digest: Optional[str] = None,
     model: Optional[str] = None,
     max_chars: int = 200_000,
+    athlete_profile: Optional[str] = None,
 ) -> Iterator[str]:
     """Yield analysis text chunks from an OpenAI-compatible chat endpoint."""
     client = _make_client(base_url, api_key)
     resolved_model = model or _first_available_model(client) or "local-model"
-    messages = _build_openai_messages(prompt, workout_json, memory_digest, max_chars)
+    messages = _build_openai_messages(prompt, workout_json, memory_digest, max_chars, athlete_profile)
 
     resp = client.chat.completions.create(model=resolved_model, messages=messages, stream=True)
     for event in resp:
@@ -255,12 +270,13 @@ def run_openai_compatible(
     model: Optional[str] = None,
     stream: bool = True,
     max_chars: int = 200_000,
+    athlete_profile: Optional[str] = None,
 ) -> str:
     """Run analysis against a local/remote OpenAI-compatible chat endpoint."""
     if stream:
         collected: List[str] = []
         for delta in stream_openai_compatible(
-            prompt, workout_json, base_url, api_key, memory_digest, model, max_chars
+            prompt, workout_json, base_url, api_key, memory_digest, model, max_chars, athlete_profile
         ):
             collected.append(delta)
             sys.stdout.write(delta)
@@ -270,7 +286,7 @@ def run_openai_compatible(
 
     client = _make_client(base_url, api_key)
     resolved_model = model or _first_available_model(client) or "local-model"
-    messages = _build_openai_messages(prompt, workout_json, memory_digest, max_chars)
+    messages = _build_openai_messages(prompt, workout_json, memory_digest, max_chars, athlete_profile)
     resp = client.chat.completions.create(model=resolved_model, messages=messages)
     text = resp.choices[0].message.content or ""
     sys.stdout.write(text + "\n")

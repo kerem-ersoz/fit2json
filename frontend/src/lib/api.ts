@@ -114,6 +114,20 @@ export interface FetchResult {
   fetched: number
 }
 
+export interface AthleteProfile {
+  name?: string | null
+  sex?: string | null
+  birth_year?: number | null
+  height_cm?: number | null
+  weight_kg?: number | null
+  resting_hr?: number | null
+  max_hr?: number | null
+  lactate_threshold_hr?: number | null
+  ftp_w?: number | null
+  vo2max?: number | null
+  goals?: string | null
+}
+
 export const api = {
   config: () => getJSON<AppConfig>('/config'),
   activities: () => getJSON<ActivitySummary[]>('/activities'),
@@ -153,6 +167,18 @@ export const api = {
     })
     if (!res.ok) throw new Error(await errorText(res))
     return (await res.json()) as FetchResult
+  },
+
+  profile: () => getJSON<AthleteProfile>('/profile'),
+
+  saveProfile: async (profile: AthleteProfile): Promise<AthleteProfile> => {
+    const res = await fetch(`${API_BASE}/profile`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(profile),
+    })
+    if (!res.ok) throw new Error(await errorText(res))
+    return (await res.json()) as AthleteProfile
   },
 }
 

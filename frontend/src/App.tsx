@@ -5,6 +5,7 @@ import { ActivityDetailPage } from './pages/ActivityDetailPage'
 import { AnalyzePage } from './pages/AnalyzePage'
 import { MemoryPage } from './pages/MemoryPage'
 import { IngestPage } from './pages/IngestPage'
+import { YouPage } from './pages/YouPage'
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
         <Route path="/analyze" element={<AnalyzePage />} />
         <Route path="/memory" element={<MemoryPage />} />
         <Route path="/ingest" element={<IngestPage />} />
+        <Route path="/you" element={<YouPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppShell>
