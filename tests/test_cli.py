@@ -128,6 +128,51 @@ class TestAnalyze:
         assert captured["athlete_profile"] is None
 
 
+class TestAnalyzeWatch:
+    def _make_lib(self, tmp_path):
+        lib = tmp_path / "lib"
+        runner.invoke(cli, ["convert", FIXTURE, "-o", str(lib)])
+        return lib
+
+    def test_watch_analyzes_new_then_dedupes(self, tmp_path, monkeypatch):
+        lib = self._make_lib(tmp_path)
+        calls = []
+        monkeypatch.setattr(analyzer, "run_openai_compatible",
+                            lambda **kw: calls.append(kw) or "MOCK OK")
+        memdir = tmp_path / "mem"
+
+        result = runner.invoke(
+            cli,
+            ["analyze", str(lib), "-p", "How was it?", "--base-url", "http://x/v1",
+             "--memory", str(memdir), "--watch", "--interval", "0.01", "--max-runs", "2"],
+        )
+        assert result.exit_code == 0, result.output
+        # Analyzed once on the first cycle; skipped as a duplicate on the second.
+        assert len(calls) == 1
+        entries = [json.loads(x) for x in (memdir / "index.jsonl").read_text().splitlines() if x.strip()]
+        assert len(entries) == 1 and entries[0]["sport"] == "running"
+        assert "no new workouts" in result.output
+
+    def test_watch_requires_directory(self, tmp_path):
+        workout = tmp_path / "w.json"
+        runner.invoke(cli, ["convert", FIXTURE, "-o", str(workout)])
+        result = runner.invoke(
+            cli, ["analyze", str(workout), "-p", "x", "--base-url", "http://x/v1",
+                  "--memory", str(tmp_path / "m"), "--watch", "--max-runs", "1"],
+        )
+        assert result.exit_code != 0
+        assert "directory" in result.output.lower()
+
+    def test_watch_requires_memory(self, tmp_path):
+        lib = self._make_lib(tmp_path)
+        result = runner.invoke(
+            cli, ["analyze", str(lib), "-p", "x", "--base-url", "http://x/v1",
+                  "--no-memory", "--watch", "--max-runs", "1"],
+        )
+        assert result.exit_code != 0
+        assert "memory" in result.output.lower()
+
+
 class TestMemoryCommands:
     def test_memory_list_empty(self, tmp_path):
         result = runner.invoke(cli, ["memory", "list", "--memory", str(tmp_path / "empty")])

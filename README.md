@@ -291,6 +291,9 @@ fit2json convert run.fit | fit2json analyze -p "Race report"
 | `--recall-limit INT` | Max memories to recall (default: 8). |
 | `--profile PATH` | Athlete-profile JSON to personalize the analysis (default: `~/.fit2json/profile.json`). |
 | `--no-profile` | Ignore the saved athlete profile for this run. |
+| `--watch` | Watch a **directory** and analyze each *new* workout individually as it appears (built-in scheduler), skipping any already in memory. |
+| `--interval SECONDS` | Seconds between polls in `--watch` mode (default: 900). |
+| `--max-runs N` | In `--watch` mode, stop after N cycles (default: run until stopped). |
 
 **How backends handle data:**
 
@@ -298,6 +301,22 @@ fit2json convert run.fit | fit2json analyze -p "Race report"
 - **`ollama` / `lmstudio` / `--base-url`** — the workout JSON is inlined and automatically **thinned** to fit `--max-chars`; recalled memories are added as a compact digest.
 
 **Personalization (the "You" profile):** if an athlete profile exists (height, weight, resting/max HR, LTHR, FTP, VO₂max, goals, …), a compact summary is injected into every analysis so the model can reason about your HR/power zones, calories, effort, and pacing. Edit it on the **You** tab of the web UI (`fit2json serve`), or point `--profile` at any profile JSON. Use `--no-profile` to opt out.
+
+**Auto-analyze new workouts (watch mode):** point `analyze --watch` at your library
+directory and it polls on the same built-in scheduler as `fetch --watch`, analyzing every
+*new* workout on its own and saving it to the memory corpus — so an analysis is ready
+shortly after a workout syncs. Already-analyzed workouts (matched by activity id in
+`index.jsonl`) are skipped, so re-runs are cheap.
+
+```bash
+# Pair with `fetch garmin --watch`: as new workouts land, analyze each and save to memory.
+fit2json analyze ~/.fit2json/library/json -p "Coach me on this workout." \
+  --backend copilot --memory ~/.fit2json/memory --watch --interval 900
+```
+
+`--watch` needs a **directory** SOURCE and the memory corpus (not `--no-memory`). It runs
+on the host (the `copilot` backend needs the Copilot CLI) and stops cleanly on
+Ctrl-C / SIGTERM — supervise it with launchd/systemd just like the poller.
 
 ### `fit2json memory`
 
@@ -460,12 +479,16 @@ already binds all interfaces).
   ```bash
   ./scripts/fitsift poller up      # needs GARMIN_EMAIL/GARMIN_PASSWORD in .env for refresh
   ```
-- **Analysis generation runs on the host, not in the container.** The `copilot` backend
-  needs the Copilot CLI, and `ollama`/`lmstudio` are reached at `localhost` — neither is
-  available inside the container. The containerized UI **browses your library and displays
-  analyses saved to `~/.fit2json/memory`**; generate them on the host with
-  `fit2json analyze … --backend copilot --memory ~/.fit2json/memory`, and they show up in
-  the UI's Memory tab.
+- **Analysis generation runs on the host, not in the container** (the `copilot` backend
+  needs the Copilot CLI; `ollama`/`lmstudio` resolve to `localhost`). Close the loop with
+  the **auto-analyze watcher**, which watches the same library and writes analyses to
+  `~/.fit2json/memory` — which the containerized UI then shows in its Memory tab:
+  ```bash
+  fit2json analyze ~/.fit2json/library/json -p "Coach me on this workout." \
+    --backend copilot --memory ~/.fit2json/memory --watch --interval 900
+  ```
+  Full pipeline: **poller (container) → library → analyzer (host) → memory → UI (container)**,
+  all coupled only through the shared `~/.fit2json` directory.
 
 ### Plain `docker run` (no compose)
 
