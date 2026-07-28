@@ -444,18 +444,46 @@ That's the automated pipeline: `update` pulls `ghcr.io/kerem-ersoz/fit2json:late
 recreates the container. Schedule it (cron/launchd) or use the built-in Watchtower
 service (below) to keep the running UI on the latest image automatically.
 
+### Start the whole pipeline in one shot
+
+`up`/`update` run only the web UI. To bring up **everything** — the web UI, the Garmin
+poller, and the auto-analyzer — in one command:
+
+```bash
+./scripts/fitsift all     # UI + poller (containers) + analyzer (host)
+./scripts/fitsift stop    # stop all three
+./scripts/fitsift status  # show every component
+```
+
+Because analysis needs the Copilot CLI (which can't run in the container), the poller and
+UI run as **containers** while the analyzer runs as a **host** process (backgrounded, with
+a PID + log under `~/.fit2json`). Prerequisites for the full pipeline:
+
+- **Poller:** a seeded Garmin token cache (`~/.fit2json/garmintokens`) — do the one-time
+  login once (see [watch mode](#continuous-export-watch-mode)); add `GARMIN_EMAIL` /
+  `GARMIN_PASSWORD` to `.env` for token refresh.
+- **Analyzer:** the Copilot CLI on the host (or set `ANALYZE_BACKEND=ollama` + a running
+  server), and a host `fit2json` (this repo's `.venv`, a global install, or `FIT2JSON_BIN`).
+
+Tune the analyzer via env / `.env`: `ANALYZE_BACKEND`, `ANALYZE_MODEL`, `ANALYZE_EFFORT`,
+`ANALYZE_INTERVAL`, `ANALYZE_PROMPT`. On first start it backfills every workout not already
+in the memory corpus.
+
 ### Script commands
 
 | Command | What it does |
 |---------|--------------|
-| `./scripts/fitsift up [--build]` | Start the web UI at http://localhost:8000. `--build` builds from local source. |
+| `./scripts/fitsift all` | **Start everything:** UI + poller (containers) + analyzer (host). |
+| `./scripts/fitsift stop` | Stop everything (containers + host analyzer). |
+| `./scripts/fitsift up [--build]` | Start just the web UI at http://localhost:8000. `--build` builds from local source. |
 | `./scripts/fitsift update` | Pull the latest image from GHCR, then restart the UI. |
-| `./scripts/fitsift restart` / `down` | Restart / stop-and-remove the containers. |
-| `./scripts/fitsift logs [-f]` | Show (follow) web UI logs. |
-| `./scripts/fitsift status` | `docker compose ps`. |
+| `./scripts/fitsift restart` / `down` | Restart the UI / stop-and-remove all containers (+ host analyzer). |
+| `./scripts/fitsift logs [-f]` | Show (follow) web UI logs (or `logs analyzer`). |
+| `./scripts/fitsift status` | Status of every component (containers + analyzer). |
 | `./scripts/fitsift open` | Open the UI in your browser. |
-| `./scripts/fitsift poller [up\|down]` | Optional background Garmin poller (keeps the library fresh). |
-| `./scripts/fitsift autoupdate [up\|down]` | Optional Watchtower — auto-pulls new images. |
+| `./scripts/fitsift poller [up\|down]` | Garmin poller container (keeps the library fresh). |
+| `./scripts/fitsift analyzer [up\|down]` | Host auto-analyzer — analyzes each new workout into memory. |
+| `./scripts/fitsift autoupdate [up\|down]` | Watchtower — auto-pulls new images. |
 
 ### Configuration
 
