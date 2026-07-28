@@ -258,6 +258,116 @@ def fetch_strava(days, output_path, gzip_out, client_id, client_secret, refresh_
 # ── analyze ──────────────────────────────────────────────────────────────────
 
 
+def _run_analyze_watch(*, source, prompt, backend, base_url, model, reasoning_effort,
+                       api_key, max_chars, memory_dir, no_memory, recall, recall_days,
+                       recall_limit, profile_path, no_profile, interval, max_runs):
+    """Watch a directory and analyze each *new* workout individually, saving to memory.
+
+    Unlike a one-shot ``analyze`` over a directory (which produces one combined
+    analysis), watch mode treats every file as its own workout, skips any activity
+    already recorded in the memory index, and keeps polling on the built-in scheduler —
+    so a workout dropped in by ``fetch --watch`` gets its own analysis shortly after.
+    """
+    import json as _json
+
+    from fit2json import analyzer
+    from fit2json import profile as profile_mod
+    from fit2json.memory import DEFAULT_MEMORY_DIR, MemoryStore, activity_id
+    from fit2json.output import load_activities
+
+    if not source:
+        raise click.ClickException("--watch requires a SOURCE directory to watch.")
+    src = Path(source)
+    if not src.is_dir():
+        raise click.ClickException("--watch requires SOURCE to be a directory (got a file).")
+    if no_memory:
+        raise click.ClickException(
+            "--watch needs the memory corpus to save and de-duplicate analyses; "
+            "remove --no-memory."
+        )
+
+    resolved = analyzer.resolve_backend(backend, base_url)
+    if resolved == "copilot" and not analyzer.copilot_available():
+        raise click.ClickException(
+            "copilot backend selected but the Copilot CLI was not found on PATH. "
+            "Install/sign in to it, or use --backend ollama|lmstudio / --base-url."
+        )
+
+    store = MemoryStore(memory_dir or DEFAULT_MEMORY_DIR)
+    store.root.mkdir(parents=True, exist_ok=True)
+
+    athlete_profile = None
+    if not no_profile:
+        ppath = Path(profile_path).expanduser() if profile_path else profile_mod.default_profile_path()
+        athlete_profile = profile_mod.format_profile_prompt(profile_mod.load_profile(ppath)) or None
+
+    def _emit(message: str) -> None:
+        click.echo(f"[analyze] {message}", err=True)
+
+    def _analyze_file(path: Path, activities: List[DecodedActivity]) -> str:
+        if resolved == "copilot":
+            return analyzer.run_copilot(
+                prompt=prompt, workout_paths=[path], memory_dir=store.root, model=model,
+                stream=False, reasoning_effort=reasoning_effort, athlete_profile=athlete_profile,
+            )
+        if base_url:
+            url, key = base_url, (api_key or "no-key")
+        else:
+            url, key = analyzer.LOCAL_BACKENDS[resolved]
+        primary = max(activities, key=lambda a: a.start_time or "")
+        workout_json = _json.dumps({"activities": [a.to_dict() for a in activities]}, ensure_ascii=False)
+        digest = store.digest(store.recall(primary.sport, recall_days, recall_limit, recall))
+        return analyzer.run_openai_compatible(
+            prompt=prompt, workout_json=workout_json, base_url=url, api_key=key,
+            memory_digest=digest, model=model, stream=False, max_chars=max_chars,
+            athlete_profile=athlete_profile,
+        )
+
+    def run_once() -> None:
+        analyzed = {e.get("activity_id") for e in store.load_index()}
+        files = sorted(
+            p for p in list(src.rglob("*.json")) + list(src.rglob("*.json.gz"))
+            if p.name != "index.jsonl"
+        )
+        pending = []
+        for path in files:
+            try:
+                acts = load_activities(path)
+            except Exception:
+                continue
+            if not acts:
+                continue
+            primary = max(acts, key=lambda a: a.start_time or "")
+            if activity_id(primary) in analyzed:
+                continue
+            pending.append((primary.start_time or "", path, acts, primary))
+        pending.sort(key=lambda t: t[0], reverse=True)  # newest workouts first
+
+        if not pending:
+            _emit("no new workouts to analyze")
+            return
+        _emit(f"{len(pending)} new workout(s) to analyze")
+        for start, path, acts, primary in pending:
+            label = f"{primary.sport or 'workout'} {start[:19]} ({path.name})"
+            try:
+                text = _analyze_file(path, acts)
+            except Exception as exc:  # noqa: BLE001 - one bad workout must not kill the loop
+                _emit(f"error analyzing {label}: {getattr(exc, 'message', None) or exc}")
+                continue
+            if not (text or "").strip():
+                _emit(f"empty analysis for {label}; will retry next cycle")
+                continue
+            saved = store.record(
+                primary, prompt, text, backend=resolved, model=model or "",
+                reasoning_effort=reasoning_effort or "",
+            )
+            analyzed.add(activity_id(primary))
+            _emit(f"saved {label} -> {saved}")
+
+    _watch_or_once(run_once, watch=True, interval=interval, max_runs=max_runs,
+                   label="for new workouts")
+
+
 @cli.command()
 @click.argument("source", type=click.Path(exists=True), required=False)
 @click.option("-p", "--prompt", required=True, help="Analysis prompt / question.")
@@ -284,13 +394,29 @@ def fetch_strava(days, output_path, gzip_out, client_id, client_secret, refresh_
 @click.option("--profile", "profile_path", default=None,
               help="Athlete-profile JSON (default: ~/.fit2json/profile.json). Personalizes the analysis.")
 @click.option("--no-profile", is_flag=True, help="Ignore the saved athlete profile.")
+@_watch_options
 def analyze(source, prompt, backend, base_url, model, reasoning_effort, api_key, no_stream, max_chars,
-            memory_dir, no_memory, recall, recall_days, recall_limit, profile_path, no_profile):
+            memory_dir, no_memory, recall, recall_days, recall_limit, profile_path, no_profile,
+            watch, interval, max_runs):
     """Analyze workout JSON with an LLM, using and updating training memory.
 
     SOURCE is a workout JSON file or a directory of them. If omitted, JSON is read
     from stdin (e.g. piped from `fit2json convert`).
+
+    With --watch, SOURCE must be a directory: fit2json polls it on the built-in
+    scheduler and analyzes each *new* workout individually (skipping any already in the
+    memory corpus), so analyses are ready shortly after `fetch --watch` saves them.
     """
+    if watch:
+        _run_analyze_watch(
+            source=source, prompt=prompt, backend=backend, base_url=base_url, model=model,
+            reasoning_effort=reasoning_effort, api_key=api_key, max_chars=max_chars,
+            memory_dir=memory_dir, no_memory=no_memory, recall=recall, recall_days=recall_days,
+            recall_limit=recall_limit, profile_path=profile_path, no_profile=no_profile,
+            interval=interval, max_runs=max_runs,
+        )
+        return
+
     from fit2json import analyzer
     from fit2json import profile as profile_mod
     from fit2json.memory import DEFAULT_MEMORY_DIR, MemoryStore
@@ -391,6 +517,7 @@ def analyze(source, prompt, backend, base_url, model, reasoning_effort, api_key,
     if store and analysis.strip():
         path = store.record(
             primary, prompt, analysis, backend=resolved, model=model or "",
+            reasoning_effort=reasoning_effort or "",
         )
         click.echo(f"\nSaved analysis to memory: {path}", err=True)
 
