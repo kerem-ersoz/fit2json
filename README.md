@@ -2,6 +2,8 @@
 
 Pull your workouts from Garmin Connect or Strava, store them as **faithful, lossless JSON**, and **analyze them with an LLM** — GitHub Copilot CLI or a local model (Ollama / LM Studio) — using your own prompt. Every analysis is saved to a **training-memory corpus** so the model can revisit past workouts and reason about your progress over time.
 
+> **Architecture & diagrams:** see [ARCHITECTURE.md](ARCHITECTURE.md) for how the poller, auto-analyzer, and web UI fit together as a local pipeline.
+
 ## What It Does
 
 **fit2json** is a command-line harness with three stages:
@@ -416,6 +418,8 @@ Run the **backend + frontend together** from the published image, reading your l
 and the built React SPA and defaults to `serve` on port 8000. A helper script,
 `scripts/fitsift`, wraps `docker compose` so fetching the latest image and running it is
 one command.
+
+> **How it all fits together (with diagrams):** [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ### Prerequisites
 
