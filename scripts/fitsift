@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+#
+# FitSift container control script.
+#
+# Runs the FitSift web UI (FastAPI backend + bundled React frontend) from the
+# fit2json container image, with optional Garmin poller and auto-update services.
+# Thin wrapper around `docker compose` using the repo's docker-compose.yml.
+#
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+COMPOSE=(docker compose)
+PORT="${FITSIFT_PORT:-8000}"
+URL="http://localhost:${PORT}"
+
+# Shared data dir (mounted into the containers at /data, and read/written by the host
+# analyzer). Export so `docker compose` interpolation resolves to the same path.
+FIT2JSON_HOME="${FIT2JSON_HOME:-$HOME/.fit2json}"
+export FIT2JSON_HOME
+LIB="$FIT2JSON_HOME/library/json"
+MEM="$FIT2JSON_HOME/memory"
+LOGDIR="$FIT2JSON_HOME/logs"
+PIDFILE="$FIT2JSON_HOME/analyzer.pid"
+
+# Host auto-analyzer knobs (override via env or .env).
+ANALYZE_BACKEND="${ANALYZE_BACKEND:-copilot}"
+ANALYZE_INTERVAL="${ANALYZE_INTERVAL:-900}"
+ANALYZE_PROMPT="${ANALYZE_PROMPT:-Coach me on this workout: pacing, HR/power zones, effort distribution, execution, and how it fits my recent training.}"
+
+open_url() { command -v open >/dev/null 2>&1 && open "$URL" || { command -v xdg-open >/dev/null 2>&1 && xdg-open "$URL"; } || echo "Open $URL"; }
+
+# Resolve a host `fit2json` binary: explicit override, then this repo's venv, then PATH.
+_fit2json_bin() {
+  if [ -n "${FIT2JSON_BIN:-}" ]; then echo "$FIT2JSON_BIN"; return 0; fi
+  if [ -x "$REPO_ROOT/.venv/bin/fit2json" ]; then echo "$REPO_ROOT/.venv/bin/fit2json"; return 0; fi
+  command -v fit2json 2>/dev/null || true
+}
+
+_analyzer_running() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null || echo 0)" 2>/dev/null; }
+
+analyzer_up() {
+  if _analyzer_running; then echo "Analyzer already running (pid $(cat "$PIDFILE"))."; return 0; fi
+  local bin; bin="$(_fit2json_bin)"
+  if [ -z "$bin" ]; then
+    echo "fit2json not found. Install it (python -m venv .venv && . .venv/bin/activate && pip install -e .) or set FIT2JSON_BIN." >&2
+    return 1
+  fi
+  mkdir -p "$LIB" "$MEM" "$LOGDIR"
+  local args=(analyze "$LIB" -p "$ANALYZE_PROMPT" --backend "$ANALYZE_BACKEND"
+              --memory "$MEM" --watch --interval "$ANALYZE_INTERVAL")
+  [ -n "${ANALYZE_MODEL:-}" ] && args+=(--model "$ANALYZE_MODEL")
+  [ -n "${ANALYZE_EFFORT:-}" ] && args+=(--reasoning-effort "$ANALYZE_EFFORT")
+  nohup "$bin" "${args[@]}" >>"$LOGDIR/analyzer.log" 2>&1 &
+  echo $! >"$PIDFILE"
+  echo "Analyzer started on host (pid $(cat "$PIDFILE")) → $LOGDIR/analyzer.log"
+}
+
+analyzer_down() {
+  if _analyzer_running; then kill "$(cat "$PIDFILE")" 2>/dev/null || true; echo "Analyzer stopped."; fi
+  rm -f "$PIDFILE"
+}
+
+usage() {
+  cat <<EOF
+FitSift — run the web UI + pipeline from the container image.
+
+Usage: scripts/fitsift <command> [options]
+
+Everything (one shot):
+  all               Start the whole pipeline: web UI + Garmin poller (containers) and the
+                    auto-analyzer (host). → UI at ${URL}
+  stop              Stop everything (containers + host analyzer).
+  status            Show status of all components.
+
+Web UI:
+  up [--build]      Start just the web UI at ${URL}.
+                    --build (re)builds the image from local source (first run / local changes).
+  update            Pull the latest image from GHCR, then (re)start the web UI.
+  restart           Restart the web UI container.
+  down              Stop and remove all FitSift containers (and the host analyzer).
+  logs [-f]         Show web UI logs (or: 'logs analyzer'). -f to follow.
+  open              Open the UI in your default browser.
+  build             Build the image locally without starting anything.
+  shell             Open a shell in a throwaway container (debugging).
+
+Components (granular control):
+  poller [up|down]      Garmin poller container → keeps the library fresh (needs Garmin creds).
+  analyzer [up|down]    Host auto-analyzer → analyzes each new workout into memory (needs Copilot CLI).
+  autoupdate [up|down]  Watchtower → auto-pull new images for the labelled containers.
+
+Data dir: ${FIT2JSON_HOME} (containers mount it at /data; the host analyzer reads/writes it).
+Analyzer knobs (env or .env): ANALYZE_BACKEND, ANALYZE_MODEL, ANALYZE_EFFORT, ANALYZE_INTERVAL, ANALYZE_PROMPT.
+EOF
+}
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  up)
+    if [[ "${1:-}" == "--build" ]]; then
+      "${COMPOSE[@]}" up -d --build fitsift
+    else
+      "${COMPOSE[@]}" up -d fitsift
+    fi
+    echo "FitSift UI → ${URL}"
+    ;;
+  update)
+    "${COMPOSE[@]}" pull fitsift
+    "${COMPOSE[@]}" up -d fitsift
+    echo "FitSift UI → ${URL}"
+    ;;
+  restart) "${COMPOSE[@]}" restart fitsift ;;
+  all)
+    "${COMPOSE[@]}" --profile poller up -d
+    analyzer_up || true
+    echo
+    echo "FitSift pipeline up:"
+    echo "  UI       → ${URL}"
+    echo "  Poller   → container fitsift-poller (fetch garmin --watch)"
+    if _analyzer_running; then
+      echo "  Analyzer → host pid $(cat "$PIDFILE") (analyze --watch → ${MEM})"
+    else
+      echo "  Analyzer → NOT running (see message above)"
+    fi
+    ;;
+  stop)
+    analyzer_down
+    "${COMPOSE[@]}" --profile poller --profile autoupdate down
+    ;;
+  down)
+    analyzer_down
+    "${COMPOSE[@]}" --profile poller --profile autoupdate down
+    ;;
+  logs)
+    if [ "${1:-}" = "analyzer" ]; then shift; tail -n 100 -f "$LOGDIR/analyzer.log"; else "${COMPOSE[@]}" logs "$@" fitsift; fi
+    ;;
+  status)
+    "${COMPOSE[@]}" ps
+    if _analyzer_running; then echo "analyzer     host process        Up (pid $(cat "$PIDFILE"))"; else echo "analyzer     host process        down"; fi
+    ;;
+  open)    open_url ;;
+  build)   "${COMPOSE[@]}" build ;;
+  shell)   "${COMPOSE[@]}" run --rm --entrypoint /bin/sh fitsift ;;
+  poller)
+    case "${1:-up}" in
+      up)   "${COMPOSE[@]}" --profile poller up -d poller; echo "Garmin poller started." ;;
+      down) "${COMPOSE[@]}" rm -sf poller ;;
+      *)    echo "usage: scripts/fitsift poller [up|down]"; exit 1 ;;
+    esac
+    ;;
+  analyzer)
+    case "${1:-up}" in
+      up)   analyzer_up ;;
+      down) analyzer_down ;;
+      logs) tail -n 100 -f "$LOGDIR/analyzer.log" ;;
+      *)    echo "usage: scripts/fitsift analyzer [up|down|logs]"; exit 1 ;;
+    esac
+    ;;
+  autoupdate)
+    case "${1:-up}" in
+      up)   "${COMPOSE[@]}" --profile autoupdate up -d watchtower; echo "Watchtower started (auto-updates on new GHCR images)." ;;
+      down) "${COMPOSE[@]}" rm -sf watchtower ;;
+      *)    echo "usage: scripts/fitsift autoupdate [up|down]"; exit 1 ;;
+    esac
+    ;;
+  help|-h|--help) usage ;;
+  *) echo "Unknown command: $cmd"; echo; usage; exit 1 ;;
+esac
