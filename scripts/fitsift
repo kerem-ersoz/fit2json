@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+#
+# FitSift container control script.
+#
+# Runs the FitSift web UI (FastAPI backend + bundled React frontend) from the
+# fit2json container image, with optional Garmin poller and auto-update services.
+# Thin wrapper around `docker compose` using the repo's docker-compose.yml.
+#
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+COMPOSE=(docker compose)
+PORT="${FITSIFT_PORT:-8000}"
+URL="http://localhost:${PORT}"
+
+usage() {
+  cat <<EOF
+FitSift — run the web UI from the container image.
+
+Usage: scripts/fitsift <command> [options]
+
+Web UI:
+  up [--build]      Start the web UI at ${URL}.
+                    --build (re)builds the image from local source. Use this for the
+                    first run, or to run un-merged local changes, until the web-capable
+                    image is published to GHCR.
+  update            Pull the latest image from GHCR, then (re)start the web UI.
+  restart           Restart the web UI container.
+  down              Stop and remove all FitSift containers.
+  logs [-f]         Show web UI logs (-f to follow).
+  status            Show container status.
+  open              Open the UI in your default browser.
+  build             Build the image locally without starting anything.
+  shell             Open a shell in a throwaway container (debugging).
+
+Optional services:
+  poller [up|down]      Background Garmin poller → keeps the library fresh (needs .env).
+  autoupdate [up|down]  Watchtower → auto-pull new images for the labelled containers.
+
+Data lives in \${FIT2JSON_HOME:-\$HOME/.fit2json} and is mounted at /data.
+EOF
+}
+
+open_url() { command -v open >/dev/null 2>&1 && open "$URL" || { command -v xdg-open >/dev/null 2>&1 && xdg-open "$URL"; } || echo "Open $URL"; }
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  up)
+    if [[ "${1:-}" == "--build" ]]; then
+      "${COMPOSE[@]}" up -d --build fitsift
+    else
+      "${COMPOSE[@]}" up -d fitsift
+    fi
+    echo "FitSift UI → ${URL}"
+    ;;
+  update)
+    "${COMPOSE[@]}" pull fitsift
+    "${COMPOSE[@]}" up -d fitsift
+    echo "FitSift UI → ${URL}"
+    ;;
+  restart) "${COMPOSE[@]}" restart fitsift ;;
+  down)    "${COMPOSE[@]}" --profile poller --profile autoupdate down ;;
+  logs)    "${COMPOSE[@]}" logs "$@" fitsift ;;
+  status)  "${COMPOSE[@]}" ps ;;
+  open)    open_url ;;
+  build)   "${COMPOSE[@]}" build ;;
+  shell)   "${COMPOSE[@]}" run --rm --entrypoint /bin/sh fitsift ;;
+  poller)
+    case "${1:-up}" in
+      up)   "${COMPOSE[@]}" --profile poller up -d poller; echo "Garmin poller started." ;;
+      down) "${COMPOSE[@]}" rm -sf poller ;;
+      *)    echo "usage: scripts/fitsift poller [up|down]"; exit 1 ;;
+    esac
+    ;;
+  autoupdate)
+    case "${1:-up}" in
+      up)   "${COMPOSE[@]}" --profile autoupdate up -d watchtower; echo "Watchtower started (auto-updates on new GHCR images)." ;;
+      down) "${COMPOSE[@]}" rm -sf watchtower ;;
+      *)    echo "usage: scripts/fitsift autoupdate [up|down]"; exit 1 ;;
+    esac
+    ;;
+  help|-h|--help) usage ;;
+  *) echo "Unknown command: $cmd"; echo; usage; exit 1 ;;
+esac

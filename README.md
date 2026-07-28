@@ -23,7 +23,11 @@ docker pull ghcr.io/kerem-ersoz/fit2json:latest
 docker run --rm ghcr.io/kerem-ersoz/fit2json --version
 ```
 
-> The Docker image covers `convert` and `fetch`. The `analyze` command's `copilot` backend needs the Copilot CLI on the host, so run analysis outside the container (or point `--base-url` at a reachable local LLM). See [Docker usage](#docker-usage).
+> The Docker image covers `convert`, `fetch`, and serving the **FitSift web UI**
+> (backend + frontend). The `analyze` command's `copilot` backend needs the Copilot CLI
+> on the host, so run analysis outside the container (or point `--base-url` at a reachable
+> local LLM). See [Docker usage](#docker-usage) and
+> [FitSift web UI in a container](#fitsift-web-ui-in-a-container-pull-and-run).
 
 ### Option 2: Install from source
 
@@ -383,6 +387,99 @@ docker run --rm --network host -v "$(pwd)":/data \
 ```
 
 > The `copilot` backend isn't available inside the image — run `fit2json analyze … --backend copilot` from a host install instead.
+
+---
+
+## FitSift web UI in a container (pull-and-run)
+
+Run the **backend + frontend together** from the published image, reading your local
+`~/.fit2json` data — no Python/Node toolchain needed. The image bundles the FastAPI API
+and the built React SPA and defaults to `serve` on port 8000. A helper script,
+`scripts/fitsift`, wraps `docker compose` so fetching the latest image and running it is
+one command.
+
+### Prerequisites
+
+- Docker + Docker Compose v2.
+- Your data in `~/.fit2json` (the default layout): `library/json/` (workouts),
+  `memory/` (analyses), `profile.json`. The container mounts `~/.fit2json` at `/data`.
+- If the GHCR package is private, log in once so images can be pulled:
+  ```bash
+  echo "$(gh auth token)" | docker login ghcr.io -u kerem-ersoz --password-stdin
+  ```
+
+### Start it
+
+```bash
+# First run (builds the image from source — use until the web-capable image is on GHCR,
+# or whenever you want to run local changes):
+./scripts/fitsift up --build
+
+# Steady state — fetch the latest published image and (re)start:
+./scripts/fitsift update
+
+# → open http://localhost:8000
+```
+
+That's the automated pipeline: `update` pulls `ghcr.io/kerem-ersoz/fit2json:latest` and
+recreates the container. Schedule it (cron/launchd) or use the built-in Watchtower
+service (below) to keep the running UI on the latest image automatically.
+
+### Script commands
+
+| Command | What it does |
+|---------|--------------|
+| `./scripts/fitsift up [--build]` | Start the web UI at http://localhost:8000. `--build` builds from local source. |
+| `./scripts/fitsift update` | Pull the latest image from GHCR, then restart the UI. |
+| `./scripts/fitsift restart` / `down` | Restart / stop-and-remove the containers. |
+| `./scripts/fitsift logs [-f]` | Show (follow) web UI logs. |
+| `./scripts/fitsift status` | `docker compose ps`. |
+| `./scripts/fitsift open` | Open the UI in your browser. |
+| `./scripts/fitsift poller [up\|down]` | Optional background Garmin poller (keeps the library fresh). |
+| `./scripts/fitsift autoupdate [up\|down]` | Optional Watchtower — auto-pulls new images. |
+
+### Configuration
+
+The compose stack reads these (all optional) from the environment or a repo-root `.env`:
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `FIT2JSON_HOME` | `~/.fit2json` | Host data dir mounted at `/data`. |
+| `FITSIFT_PORT` | `8000` | Host port for the UI. |
+| `POLL_INTERVAL` | `900` | Seconds between Garmin polls (poller service). |
+| `WATCH_INTERVAL` | `3600` | Seconds between image-update checks (autoupdate). |
+
+Reach it from your phone on the same Wi-Fi at `http://<your-laptop-ip>:8000` (the server
+already binds all interfaces).
+
+### Keeping data fresh + the analysis caveat
+
+- The optional **poller** service runs `fetch garmin --watch` in the container, writing
+  new workouts into the same `~/.fit2json/library/json` the UI reads. Seed the Garmin
+  token cache once on the host (see [watch mode](#continuous-export-watch-mode)), then:
+  ```bash
+  ./scripts/fitsift poller up      # needs GARMIN_EMAIL/GARMIN_PASSWORD in .env for refresh
+  ```
+- **Analysis generation runs on the host, not in the container.** The `copilot` backend
+  needs the Copilot CLI, and `ollama`/`lmstudio` are reached at `localhost` — neither is
+  available inside the container. The containerized UI **browses your library and displays
+  analyses saved to `~/.fit2json/memory`**; generate them on the host with
+  `fit2json analyze … --backend copilot --memory ~/.fit2json/memory`, and they show up in
+  the UI's Memory tab.
+
+### Plain `docker run` (no compose)
+
+```bash
+docker run -d --name fitsift-web --restart unless-stopped \
+  -p 8000:8000 -v ~/.fit2json:/data \
+  ghcr.io/kerem-ersoz/fit2json:latest serve --host 0.0.0.0 --port 8000
+```
+
+### Publishing
+
+`.github/workflows/docker-publish.yml` builds this image (multi-arch, linux/amd64 +
+arm64) and pushes `ghcr.io/kerem-ersoz/fit2json:latest` on every push to `main`. Until
+this change lands there, `:latest` on GHCR is CLI-only — use `./scripts/fitsift up --build`.
 
 ---
 
