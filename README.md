@@ -473,6 +473,27 @@ Tune the analyzer via env / `.env`: `ANALYZE_BACKEND`, `ANALYZE_MODEL`, `ANALYZE
 `ANALYZE_INTERVAL`, `ANALYZE_PROMPT`. On first start it backfills every workout not already
 in the memory corpus.
 
+### Local testing with Copilot (host mode)
+
+The container's web UI can't offer the **Copilot** backend, because the Copilot CLI is a
+host tool that can't run inside the Linux image (wrong OS/arch, and it needs an
+authenticated sign-in). For local testing where you want Copilot live in the Analyze
+picker, run everything as host processes instead:
+
+```bash
+./scripts/fitsift local     # web UI + Garmin poller + auto-analyzer, all on the host
+./scripts/fitsift status    # web / poller / analyzer + containers
+./scripts/fitsift stop      # stop everything
+```
+
+`local` is idempotent (per-service PID files + logs under `~/.fit2json`), serves the built
+SPA via `fit2json serve` where Copilot is on `PATH`, and starts the poller and
+auto-analyzer alongside it. It won't collide with the container stack: starting one stops
+the other's web service on port 8000. Tune it with `FITSIFT_PORT`, `POLL_INTERVAL`, and the
+`ANALYZE_*` knobs. The Garmin poller needs a valid token cache for this build; seed it once
+with `fit2json fetch garmin --days 1 --token-dir ~/.fit2json/garmintokens` (enter MFA if
+prompted), after which the poller resumes automatically.
+
 ### Script commands
 
 | Command | What it does |
