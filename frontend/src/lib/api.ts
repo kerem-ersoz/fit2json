@@ -251,25 +251,23 @@ function parseFrame(frame: string): SseFrame | null {
   }
 }
 
-/** POST /analyze and stream the Server-Sent Events back through the handlers. */
-export async function streamAnalyze(
-  body: AnalyzeBody,
-  handlers: StreamHandlers,
+/** POST a JSON body and return the streaming Response, or an error message string. */
+async function startSse(
+  path: string,
+  body: unknown,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<Response | string> {
   let res: Response
   try {
-    res = await fetch(`${API_BASE}/analyze`, {
+    res = await fetch(`${API_BASE}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
       signal,
     })
   } catch (e) {
-    handlers.onError?.((e as Error)?.message ?? 'Request failed')
-    return
+    return (e as Error)?.message ?? 'Request failed'
   }
-
   if (!res.ok || !res.body) {
     let msg = `${res.status} ${res.statusText}`
     try {
@@ -278,11 +276,14 @@ export async function streamAnalyze(
     } catch {
       /* ignore */
     }
-    handlers.onError?.(msg)
-    return
+    return msg
   }
+  return res
+}
 
-  const reader = res.body.getReader()
+/** Read an SSE Response body, dispatching each parsed frame. */
+async function pumpSse(res: Response, onFrame: (frame: SseFrame) => void): Promise<void> {
+  const reader = res.body!.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
 
@@ -295,13 +296,122 @@ export async function streamAnalyze(
       const frame = buffer.slice(0, sep)
       buffer = buffer.slice(sep + 2)
       const parsed = parseFrame(frame)
-      if (!parsed) continue
-      if (parsed.event === 'start') handlers.onStart?.(parsed.data.backend)
-      else if (parsed.event === 'step') handlers.onStep?.(parsed.data)
-      else if (parsed.event === 'reduce') handlers.onReduce?.(parsed.data)
-      else if (parsed.event === 'delta') handlers.onDelta(parsed.data.text ?? '')
-      else if (parsed.event === 'done') handlers.onDone?.(parsed.data)
-      else if (parsed.event === 'error') handlers.onError?.(parsed.data.message ?? 'Analysis failed')
+      if (parsed) onFrame(parsed)
     }
   }
+}
+
+/** POST /analyze and stream the Server-Sent Events back through the handlers. */
+export async function streamAnalyze(
+  body: AnalyzeBody,
+  handlers: StreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  const started = await startSse('/analyze', body, signal)
+  if (typeof started === 'string') {
+    handlers.onError?.(started)
+    return
+  }
+  await pumpSse(started, (parsed) => {
+    if (parsed.event === 'start') handlers.onStart?.(parsed.data.backend)
+    else if (parsed.event === 'step') handlers.onStep?.(parsed.data)
+    else if (parsed.event === 'reduce') handlers.onReduce?.(parsed.data)
+    else if (parsed.event === 'delta') handlers.onDelta(parsed.data.text ?? '')
+    else if (parsed.event === 'done') handlers.onDone?.(parsed.data)
+    else if (parsed.event === 'error') handlers.onError?.(parsed.data.message ?? 'Analysis failed')
+  })
+}
+
+export interface InfographicBody {
+  analysis: string
+  backend?: string | null
+  model?: string | null
+  reasoning_effort?: string | null
+}
+
+export interface InfographicHandlers {
+  onStart?: (backend: string) => void
+  onDelta: (text: string) => void
+  onDone?: (info: { chars: number; backend: string; id: string }) => void
+  onError?: (message: string) => void
+}
+
+/** URL that serves a finished infographic as a standalone page (for the iframe `src`). */
+export function infographicViewUrl(id: string): string {
+  return `${API_BASE}/infographic/view/${encodeURIComponent(id)}`
+}
+
+/** POST /infographic and stream the generated HTML back through the handlers. */
+export async function streamInfographic(
+  body: InfographicBody,
+  handlers: InfographicHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  const started = await startSse('/infographic', body, signal)
+  if (typeof started === 'string') {
+    handlers.onError?.(started)
+    return
+  }
+  await pumpSse(started, (parsed) => {
+    if (parsed.event === 'start') handlers.onStart?.(parsed.data.backend)
+    else if (parsed.event === 'delta') handlers.onDelta(parsed.data.text ?? '')
+    else if (parsed.event === 'done') handlers.onDone?.(parsed.data)
+    else if (parsed.event === 'error') handlers.onError?.(parsed.data.message ?? 'Infographic failed')
+  })
+}
+
+// ── Persisted infographics for saved analyses (keyed by memory entry_id) ──────
+
+export interface InfographicOptions {
+  backend?: string | null
+  model?: string | null
+  reasoning_effort?: string | null
+}
+
+export interface MemoryInfographicHandlers {
+  onStart?: (backend: string) => void
+  onDelta: (text: string) => void
+  onDone?: (info: { chars: number; backend: string; generated_at: string | null }) => void
+  onError?: (message: string) => void
+}
+
+/** Whether a saved analysis already has a cached infographic. */
+export function memoryInfographicStatus(entryId: string) {
+  return getJSON<{ exists: boolean; generated_at: string | null }>(
+    `/memory/${encodeURIComponent(entryId)}/infographic`,
+  )
+}
+
+/** URL that serves a saved analysis's cached infographic (for the iframe `src`). */
+export function memoryInfographicViewUrl(entryId: string): string {
+  return `${API_BASE}/memory/${encodeURIComponent(entryId)}/infographic/view`
+}
+
+/** URL of the stored infographic HTML as-is (for copy / download). */
+export function memoryInfographicRawUrl(entryId: string): string {
+  return `${API_BASE}/memory/${encodeURIComponent(entryId)}/infographic/raw`
+}
+
+/** POST to (re)generate and persist a saved analysis's infographic; streams progress. */
+export async function streamMemoryInfographic(
+  entryId: string,
+  body: InfographicOptions,
+  handlers: MemoryInfographicHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  const started = await startSse(
+    `/memory/${encodeURIComponent(entryId)}/infographic`,
+    body,
+    signal,
+  )
+  if (typeof started === 'string') {
+    handlers.onError?.(started)
+    return
+  }
+  await pumpSse(started, (parsed) => {
+    if (parsed.event === 'start') handlers.onStart?.(parsed.data.backend)
+    else if (parsed.event === 'delta') handlers.onDelta(parsed.data.text ?? '')
+    else if (parsed.event === 'done') handlers.onDone?.(parsed.data)
+    else if (parsed.event === 'error') handlers.onError?.(parsed.data.message ?? 'Infographic failed')
+  })
 }

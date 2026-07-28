@@ -53,6 +53,65 @@ CHART_INSTRUCTIONS = (
     "Write the rest of your analysis as normal markdown around the chart(s)."
 )
 
+# ── Infographic pass (optional second prompt, web UI only) ──────────────────────
+# Takes a finished analysis and asks the model to re-render it as a single, visual,
+# self-contained HTML infographic so the athlete can scan it instead of reading prose.
+
+INFOGRAPHIC_SYSTEM_PROMPT = (
+    "You are a meticulous data-visualization designer. You are given a finished workout "
+    "analysis that a coach has already written, and you turn it into a single, self-contained, "
+    "responsive HTML infographic so the athlete can grasp it at a glance instead of reading a "
+    "wall of text.\n\n"
+    "DESIGN LANGUAGE — match it exactly (this product is 'a quiet instrument': calm, precise, "
+    "data-forward; the data is the hero and the chrome recedes):\n"
+    "- Surface #ffffff. Text: #0f172a for headings, #475569 for body, #64748b for muted labels. "
+    "Structure with hairline 1px borders (#e2e8f0) and generous whitespace — NOT with color.\n"
+    "- Exactly ONE accent color, Signal Green #059669, used on <=10% of the page: one hero number, "
+    "a few bar fills or a thin rule. Never flood large areas with it.\n"
+    "- Flat. No drop shadows, no gradients, no gradient text, no glow. No tracked-uppercase "
+    "eyebrow labels. No emoji. Rounded corners 8-12px on cards.\n"
+    "- Font: the system stack "
+    "font-family:Inter,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif.\n\n"
+    "STRUCTURE (adapt to the content — omit sections the analysis doesn't support):\n"
+    "- A short headline and a one-sentence takeaway.\n"
+    "- A responsive row of stat cards: big number + small unit + caption, for the key metrics.\n"
+    "- CSS-only visuals where they add clarity: horizontal bar meters for zone / effort / time "
+    "distribution, labeled progress bars, simple side-by-side comparison bars. Build every chart "
+    "from plain <div>s with inline widths/percentages.\n"
+    "- Compact callout cards for the key insights, and a short 'what to do next' list if the "
+    "analysis implies next steps.\n\n"
+    "HARD RULES:\n"
+    "- Output ONE complete, valid HTML document beginning with <!doctype html>. Put ALL CSS in a "
+    "single <style> in <head>. Use only inline/embedded CSS — no frameworks.\n"
+    "- No JavaScript. No <img>, <svg> external refs, <iframe>, remote URLs, @import, or web fonts. "
+    "It must render fully offline.\n"
+    "- Use ONLY numbers and facts present in the provided analysis. Never invent data; if a value "
+    "isn't stated, leave it out.\n"
+    "- Accessible: body text contrast >=4.5:1 on white. Fluid layout that works from ~360px to "
+    "~900px wide (use flex-wrap / min-width, not fixed pixel columns).\n"
+    "- Respond with ONLY the HTML — no markdown, no code fences, no commentary before or after."
+)
+
+# Copilot's agentic prompt normally ends by asking for markdown to stdout; the infographic
+# pass overrides that trailer so the CLI emits raw HTML and never touches files.
+INFOGRAPHIC_FINAL_INSTRUCTION = (
+    "Output ONLY the complete HTML document (starting with <!doctype html>) to stdout. "
+    "Do not modify any files."
+)
+
+
+def build_infographic_user_prompt(analysis: str) -> str:
+    """The user message for the infographic pass: the analysis to visualize."""
+    return (
+        "Turn the following workout analysis into an HTML infographic, following your design "
+        "rules. Ground every number in this text and do not add data that isn't here.\n\n"
+        "===== ANALYSIS =====\n"
+        f"{analysis.strip()}\n"
+        "===== END ANALYSIS =====\n\n"
+        "Produce the complete HTML document now."
+    )
+
+
 # Local OpenAI-compatible backends: (base_url, default api key)
 LOCAL_BACKENDS = {
     "ollama": ("http://localhost:11434/v1", "ollama"),
@@ -112,8 +171,10 @@ def _build_copilot_prompt(
     memory_dir: Optional[Path],
     library_dir: Optional[Path] = None,
     athlete_profile: Optional[str] = None,
+    system_prompt: Optional[str] = None,
+    final_instruction: Optional[str] = None,
 ) -> str:
-    lines = [SYSTEM_PROMPT, ""]
+    lines = [system_prompt or SYSTEM_PROMPT, ""]
     if athlete_profile:
         lines += [athlete_profile, ""]
     if workout_paths:
@@ -137,7 +198,7 @@ def _build_copilot_prompt(
         lines.append("")
     lines.append(f"Athlete's request:\n{prompt}")
     lines.append("")
-    lines.append("Write the analysis to stdout as markdown. Do not modify any files.")
+    lines.append(final_instruction or "Write the analysis to stdout as markdown. Do not modify any files.")
     return "\n".join(lines)
 
 
@@ -182,6 +243,8 @@ def stream_copilot(
     reasoning_effort: Optional[str] = None,
     library_dir: Optional[Path] = None,
     athlete_profile: Optional[str] = None,
+    system_prompt: Optional[str] = None,
+    final_instruction: Optional[str] = None,
 ) -> Iterator[str]:
     """Yield analysis text chunks from the GitHub Copilot CLI subprocess.
 
@@ -192,6 +255,9 @@ def stream_copilot(
     agent response — no tool-call trace or stats footer. Used by the web UI so saved
     analyses are clean prose + charts. ``library_dir`` grants the agent access to the
     whole workout library so it can find relevant workouts itself (freeform mode).
+
+    ``system_prompt``/``final_instruction`` override the default coach persona and the
+    "write markdown to stdout" trailer — used by the infographic pass to request raw HTML.
 
     ``--model`` is only passed when ``model`` is given, so an unset model falls back to
     the user's *configured* Copilot default (e.g. Opus). Forcing ``--model auto`` here
@@ -213,7 +279,8 @@ def stream_copilot(
         )
 
     full_prompt = _build_copilot_prompt(
-        prompt, workout_paths, memory_dir, library_dir, athlete_profile
+        prompt, workout_paths, memory_dir, library_dir, athlete_profile,
+        system_prompt=system_prompt, final_instruction=final_instruction,
     )
 
     cmd = [
@@ -277,6 +344,7 @@ def _build_openai_messages(
     memory_digest: Optional[str],
     max_chars: int,
     athlete_profile: Optional[str] = None,
+    system_prompt: Optional[str] = None,
 ) -> "List[ChatCompletionMessageParam]":
     """Build the system+user chat messages, compacting the workout JSON to fit."""
     workout_json = compact_workout_json(workout_json, max_chars)
@@ -288,11 +356,12 @@ def _build_openai_messages(
         user_parts.append(
             "Prior workout analyses (memory, for trend context):\n" + memory_digest
         )
-    user_parts.append("Workout data (lossless FIT JSON):\n```json\n" + workout_json + "\n```")
+    if workout_json:
+        user_parts.append("Workout data (lossless FIT JSON):\n```json\n" + workout_json + "\n```")
     user_parts.append("Athlete's request:\n" + prompt)
 
     messages: "List[ChatCompletionMessageParam]" = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt or SYSTEM_PROMPT},
         {"role": "user", "content": "\n\n".join(user_parts)},
     ]
     return messages
@@ -307,11 +376,14 @@ def stream_openai_compatible(
     model: Optional[str] = None,
     max_chars: int = 200_000,
     athlete_profile: Optional[str] = None,
+    system_prompt: Optional[str] = None,
 ) -> Iterator[str]:
     """Yield analysis text chunks from an OpenAI-compatible chat endpoint."""
     client = _make_client(base_url, api_key)
     resolved_model = model or _first_available_model(client) or "local-model"
-    messages = _build_openai_messages(prompt, workout_json, memory_digest, max_chars, athlete_profile)
+    messages = _build_openai_messages(
+        prompt, workout_json, memory_digest, max_chars, athlete_profile, system_prompt
+    )
 
     resp = client.chat.completions.create(model=resolved_model, messages=messages, stream=True)
     for event in resp:

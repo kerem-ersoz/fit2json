@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { MarkdownView } from '../../components/ui/Markdown'
+import { AnalysisLens } from '../analyze/AnalysisLens'
 
 /**
  * Strips the redundant front-matter-derived header a saved analysis carries — the
@@ -22,10 +23,12 @@ export function AnalysisView({
   content,
   prompt,
   meta,
+  entryId,
 }: {
   content: string
   prompt?: string
   meta?: string
+  entryId?: string
 }) {
   const body = useMemo(() => stripEcho(content, prompt), [content, prompt])
   const preview = prompt ? (prompt.length > 100 ? `${prompt.slice(0, 100)}…` : prompt) : ''
@@ -44,7 +47,11 @@ export function AnalysisView({
           </div>
         </details>
       )}
-      <MarkdownView>{body}</MarkdownView>
+      <AnalysisLens
+        surface="inline"
+        source={entryId ? { kind: 'entry', entryId } : { kind: 'ephemeral', analysis: body }}
+        text={<MarkdownView>{body}</MarkdownView>}
+      />
     </div>
   )
 }
