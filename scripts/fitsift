@@ -49,8 +49,17 @@ _ensure_bin() {
 }
 _ensure_dist() {
   [ -f "$REPO_ROOT/frontend/dist/index.html" ] && return 0
-  echo "  building frontend (frontend/dist missing) ..."
-  ( cd "$REPO_ROOT/frontend" && npm run build ) >/dev/null 2>&1 || { echo "  frontend build failed (need Node + npm)" >&2; return 1; }
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "  frontend/dist is missing and 'npm' was not found on PATH." >&2
+    echo "  Install Node 18+ and npm, then re-run (or build frontend/dist and copy it in)." >&2
+    return 1
+  fi
+  echo "  building frontend SPA in $REPO_ROOT/frontend (dist missing) ..."
+  (
+    cd "$REPO_ROOT/frontend" || exit 1
+    if [ ! -d node_modules ]; then echo "  installing frontend deps (npm ci) ..."; npm ci || npm install || exit 1; fi
+    npm run build
+  ) || { echo "  frontend build failed; try manually: (cd \"$REPO_ROOT/frontend\" && npm ci && npm run build)" >&2; return 1; }
 }
 
 # ── generic host-process supervisor (one PID file + log per service) ──────────
