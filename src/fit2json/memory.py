@@ -271,3 +271,32 @@ class MemoryStore:
                 if rel and (self.root / rel).exists():
                     return (self.root / rel).read_text(encoding="utf-8")
         return None
+
+    # ── infographics (cached visual renderings, keyed by entry_id) ────────────
+
+    def infographic_path(self, entry_id: str) -> Path:
+        """Sidecar HTML path for an entry's rendered infographic.
+
+        ``entry_id`` is sanitized to a single path segment, so this always resolves
+        inside ``<root>/infographics/`` regardless of the value passed in.
+        """
+        return self.root / "infographics" / f"{_sanitize(entry_id)}.html"
+
+    def has_infographic(self, entry_id: str) -> bool:
+        return self.infographic_path(entry_id).exists()
+
+    def read_infographic(self, entry_id: str) -> Optional[str]:
+        path = self.infographic_path(entry_id)
+        return path.read_text(encoding="utf-8") if path.exists() else None
+
+    def write_infographic(self, entry_id: str, html: str) -> Path:
+        path = self.infographic_path(entry_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(html, encoding="utf-8")
+        return path
+
+    def infographic_generated_at(self, entry_id: str) -> Optional[str]:
+        path = self.infographic_path(entry_id)
+        if not path.exists():
+            return None
+        return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()

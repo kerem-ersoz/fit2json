@@ -257,6 +257,7 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
                     content={a.content ?? ''}
                     prompt={a.prompt}
                     meta={`${a.backend}${a.model ? ` · ${a.model}` : ''}`}
+                    entryId={a.entry_id}
                   />
                 </div>
               </details>
