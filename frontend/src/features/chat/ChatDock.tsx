@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   Check,
@@ -211,12 +211,27 @@ function ChatView({
     return ['Compare my last 3 long runs', 'How did my running go this month?', 'Summarize this week of training']
   }, [attachedCount])
 
-  const submit = (text: string) => {
-    if (chat.running) return // don't clear/drop a follow-up typed mid-stream
-    if (!text.trim()) return
-    setInput('')
-    void chat.send(text)
-  }
+  const submit = useCallback(
+    (text: string) => {
+      if (chat.running) return // don't clear/drop a follow-up typed mid-stream
+      if (!text.trim()) return
+      setInput('')
+      void chat.send(text)
+    },
+    [chat.running, chat.send],
+  )
+
+  const lens = useMemo(
+    () => ({
+      backend: chat.backend || undefined,
+      model:
+        !chat.effectiveModel || chat.effectiveModel === 'auto'
+          ? undefined
+          : chat.effectiveModel,
+      reasoningEffort: chat.effort || undefined,
+    }),
+    [chat.backend, chat.effectiveModel, chat.effort],
+  )
 
   const commitTitle = () => {
     setEditingTitle(false)
@@ -400,64 +415,16 @@ function ChatView({
         </div>
       )}
 
-      {/* Transcript */}
-      <div className="flex-1 overflow-y-auto px-3 py-4">
-        {chat.messages.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-50 text-brand-600">
-              <Sparkles className="h-6 w-6" />
-            </div>
-            <p className="text-sm font-medium text-slate-700">
-              {attachedCount > 0
-                ? attachedCount === 1
-                  ? 'Ask about this workout'
-                  : `Ask about these ${attachedCount} workouts`
-                : 'Ask about your training'}
-            </p>
-            <p className="max-w-xs text-sm text-slate-500">
-              {attachedCount > 0
-                ? 'Answers stream in below. This conversation is saved so you can pick it up later.'
-                : 'Describe workouts in your question, or select some on the Analyze tab. Saved for later.'}
-            </p>
-            <div className="mt-1 flex flex-wrap justify-center gap-2">
-              {suggestions.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => submit(s)}
-                  className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {chat.messages.map((m) => (
-              <MessageBubble
-                key={m.id}
-                msg={m}
-                running={chat.running}
-                lens={{
-                  backend: chat.backend || undefined,
-                  model:
-                    !chat.effectiveModel || chat.effectiveModel === 'auto'
-                      ? undefined
-                      : chat.effectiveModel,
-                  reasoningEffort: chat.effort || undefined,
-                }}
-              />
-            ))}
-            {chat.error && (
-              <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                {chat.error}
-              </div>
-            )}
-            <div ref={endRef} />
-          </div>
-        )}
-      </div>
+      <ChatTranscript
+        messages={chat.messages}
+        running={chat.running}
+        error={chat.error}
+        attachedCount={attachedCount}
+        suggestions={suggestions}
+        onSubmit={submit}
+        lens={lens}
+        endRef={endRef}
+      />
 
       {/* Composer */}
       <div className="border-t border-slate-100 p-3">
@@ -467,13 +434,13 @@ function ChatView({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault()
                 submit(input)
               }
             }}
             rows={1}
-            placeholder={attachedCount > 0 ? 'Ask a question…  (⌘/Ctrl+Enter)' : 'Ask anything — e.g. “compare my last 3 long runs”'}
+            placeholder={attachedCount > 0 ? 'Ask a question…' : 'Ask anything — e.g. “compare my last 3 long runs”'}
             aria-label="Message"
             className="max-h-32 min-h-[44px] flex-1 resize-y rounded-lg border border-slate-200 p-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
@@ -496,6 +463,76 @@ function ChatView({
     </>
   )
 }
+
+interface ChatTranscriptProps {
+  messages: Msg[]
+  running: boolean
+  error: string | null
+  attachedCount: number
+  suggestions: string[]
+  onSubmit: (text: string) => void
+  lens: { backend?: string; model?: string; reasoningEffort?: string }
+  endRef: React.RefObject<HTMLDivElement>
+}
+
+const ChatTranscript = memo(function ChatTranscript({
+  messages,
+  running,
+  error,
+  attachedCount,
+  suggestions,
+  onSubmit,
+  lens,
+  endRef,
+}: ChatTranscriptProps) {
+  return (
+    <div className="flex-1 overflow-y-auto px-3 py-4">
+      {messages.length === 0 ? (
+        <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-50 text-brand-600">
+            <Sparkles className="h-6 w-6" />
+          </div>
+          <p className="text-sm font-medium text-slate-700">
+            {attachedCount > 0
+              ? attachedCount === 1
+                ? 'Ask about this workout'
+                : `Ask about these ${attachedCount} workouts`
+              : 'Ask about your training'}
+          </p>
+          <p className="max-w-xs text-sm text-slate-500">
+            {attachedCount > 0
+              ? 'Answers stream in below. This conversation is saved so you can pick it up later.'
+              : 'Describe workouts in your question, or select some on the Analyze tab. Saved for later.'}
+          </p>
+          <div className="mt-1 flex flex-wrap justify-center gap-2">
+            {suggestions.map((suggestion) => (
+              <button
+                key={suggestion}
+                type="button"
+                onClick={() => onSubmit(suggestion)}
+                className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              >
+                {suggestion}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {messages.map((message) => (
+            <MessageBubble key={message.id} msg={message} running={running} lens={lens} />
+          ))}
+          {error && (
+            <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+          <div ref={endRef} />
+        </div>
+      )}
+    </div>
+  )
+})
 
 function HistoryView({ onClose }: { onClose: () => void }) {
   const chat = useChat()
@@ -733,7 +770,7 @@ function StepList({ steps, running }: { steps: MapStep[]; running: boolean }) {
   )
 }
 
-function MessageBubble({
+const MessageBubble = memo(function MessageBubble({
   msg,
   running,
   lens,
@@ -776,4 +813,4 @@ function MessageBubble({
       ) : null}
     </div>
   )
-}
+})
