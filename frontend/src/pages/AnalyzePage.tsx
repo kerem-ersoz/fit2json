@@ -10,7 +10,6 @@ import { useCardKeyboardNav } from '../lib/useCardKeyboardNav'
 import { useChat } from '../features/chat/ChatProvider'
 import { ChatWorkspace } from '../features/chat/ChatDock'
 import { WorkoutBrowser } from '../features/analyze/WorkoutBrowser'
-import { Button } from '../components/ui/Button'
 import { EmptyState, ErrorState } from '../components/ui/Feedback'
 import { Sheet } from '../components/ui/Sheet'
 
@@ -32,6 +31,22 @@ export function AnalyzePage() {
   useEffect(() => {
     setOpen(false)
   }, [setOpen])
+
+  useEffect(() => {
+    const root = document.documentElement
+    const body = document.body
+    const scrollY = window.scrollY
+    const previousBodyTop = body.style.top
+
+    root.classList.add('analyze-viewport-locked')
+    body.style.top = `-${scrollY}px`
+
+    return () => {
+      root.classList.remove('analyze-viewport-locked')
+      body.style.top = previousBodyTop
+      window.scrollTo({ top: scrollY, behavior: 'auto' })
+    }
+  }, [])
 
   const selected = useMemo(() => new Set(activityIds), [activityIds])
 
@@ -74,32 +89,14 @@ export function AnalyzePage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden overscroll-none">
       <h1 className="sr-only">Analyze</h1>
-      <div className="mb-2 flex shrink-0 justify-end sm:mb-3">
-        <Button
-          variant="secondary"
-          onClick={() => setContextOpen(true)}
-          aria-haspopup="dialog"
-          aria-expanded={contextOpen}
-          className="shrink-0 px-3 sm:px-4"
-        >
-          <Paperclip className="h-4 w-4" />
-          <span className="hidden sm:inline">Workout context</span>
-          <span className="sm:hidden">Context</span>
-          <span
-            className={
-              selectedCount > 0
-                ? 'inline-flex min-w-5 items-center justify-center rounded-full bg-brand-50 px-1.5 py-0.5 text-xs font-semibold tabular-nums text-brand-700'
-                : 'inline-flex min-w-5 items-center justify-center rounded-full bg-slate-100 px-1.5 py-0.5 text-xs font-semibold tabular-nums text-slate-600'
-            }
-          >
-            {selectedCount}
-          </span>
-        </Button>
-      </div>
-
-      <ChatWorkspace className="min-h-0 flex-1" />
+      <ChatWorkspace
+        className="min-h-0 flex-1"
+        contextCount={selectedCount}
+        contextOpen={contextOpen}
+        onOpenContext={() => setContextOpen(true)}
+      />
 
       {contextOpen && (
         <Sheet

@@ -112,7 +112,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div
       className={clsx(
-        isAnalyze ? 'flex h-dvh flex-col overflow-hidden lg:flex-row' : 'min-h-full lg:flex',
+        isAnalyze
+          ? 'fixed inset-x-0 top-0 flex h-dvh flex-col overflow-hidden overscroll-none lg:flex-row'
+          : 'min-h-full lg:flex',
       )}
     >
       {/* Desktop sidebar */}
@@ -152,7 +154,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       {/* Mobile top bar */}
-      <header className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur lg:hidden">
+      <header className="sticky top-0 z-20 flex shrink-0 items-center justify-between border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur lg:hidden">
         <BrandMark compact />
         <div className="flex items-center gap-2">
           <UnitsToggle />
@@ -161,7 +163,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </header>
 
       {/* Main content */}
-      <main className={clsx('min-w-0 flex-1', isAnalyze && 'min-h-0')}>
+      <main className={clsx('min-w-0 flex-1', isAnalyze && 'min-h-0 overflow-hidden')}>
         <div
           className={clsx(
             'mx-auto px-4 sm:px-6 lg:px-8',

@@ -29,7 +29,7 @@ import { InfographicView } from '../analyze/InfographicView'
 import { CUSTOM_MODEL, useChat, type Msg } from './ChatProvider'
 
 const selectClass =
-  'h-8 max-w-[10rem] rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50'
+  'h-8 max-w-[10rem] rounded-lg border border-slate-200 bg-white px-2 text-base text-slate-700 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50 sm:text-xs'
 
 const MODEL_LABELS: Record<string, string> = {
   'gpt-5.6-sol': 'GPT-5.6 Sol · Long context',
@@ -115,16 +115,31 @@ function infographicTranscript(messages: Msg[]): string {
 type ChatSurfaceMode = 'drawer' | 'workspace'
 
 /** The primary Analyze experience: a persistent conversation with room for long answers. */
-export function ChatWorkspace({ className }: { className?: string }) {
+export function ChatWorkspace({
+  className,
+  contextCount,
+  contextOpen,
+  onOpenContext,
+}: {
+  className?: string
+  contextCount: number
+  contextOpen: boolean
+  onOpenContext: () => void
+}) {
   return (
     <section
       aria-label="Training conversation"
       className={clsx(
-        'flex min-h-[34rem] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white',
+        'flex min-h-0 flex-col overflow-hidden overscroll-none rounded-xl border border-slate-200 bg-white',
         className,
       )}
     >
-      <ChatSurface mode="workspace" />
+      <ChatSurface
+        mode="workspace"
+        contextCount={contextCount}
+        contextOpen={contextOpen}
+        onOpenContext={onOpenContext}
+      />
     </section>
   )
 }
@@ -195,10 +210,16 @@ export function ChatDock() {
 function ChatSurface({
   mode,
   active = false,
+  contextCount = 0,
+  contextOpen = false,
+  onOpenContext,
   onClose,
 }: {
   mode: ChatSurfaceMode
   active?: boolean
+  contextCount?: number
+  contextOpen?: boolean
+  onOpenContext?: () => void
   onClose?: () => void
 }) {
   const [view, setView] = useState<'chat' | 'history'>('chat')
@@ -217,6 +238,9 @@ function ChatSurface({
     <ChatView
       mode={mode}
       inputRef={inputRef}
+      contextCount={contextCount}
+      contextOpen={contextOpen}
+      onOpenContext={onOpenContext}
       onShowHistory={() => setView('history')}
       onClose={onClose}
     />
@@ -226,11 +250,17 @@ function ChatSurface({
 function ChatView({
   mode,
   inputRef,
+  contextCount,
+  contextOpen,
+  onOpenContext,
   onShowHistory,
   onClose,
 }: {
   mode: ChatSurfaceMode
   inputRef: React.RefObject<HTMLTextAreaElement>
+  contextCount: number
+  contextOpen: boolean
+  onOpenContext?: () => void
   onShowHistory: () => void
   onClose?: () => void
 }) {
@@ -250,7 +280,7 @@ function ChatView({
   const [showInfographic, setShowInfographic] = useState(false)
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
-  const endRef = useRef<HTMLDivElement>(null)
+  const transcriptRef = useRef<HTMLDivElement>(null)
 
   // Keep the model selection valid for the chosen backend.
   useEffect(() => {
@@ -264,7 +294,12 @@ function ChatView({
   useEffect(() => {
     const reduce =
       typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    endRef.current?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'end' })
+    const transcript = transcriptRef.current
+    if (!transcript) return
+    transcript.scrollTo({
+      top: transcript.scrollHeight,
+      behavior: reduce ? 'auto' : 'smooth',
+    })
   }, [chat.messages])
 
   const attached = useMemo(
@@ -303,12 +338,12 @@ function ChatView({
       {/* Header */}
       <div
         className={clsx(
-          'flex items-center gap-2 border-b border-slate-100',
+          'flex shrink-0 items-center gap-1 border-b border-slate-100 sm:gap-2',
           isWorkspace ? 'px-4 py-3 sm:px-5' : 'px-3 py-2.5',
         )}
       >
         {isWorkspace ? (
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700">
+          <span className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700 sm:flex">
             <MessageSquare className="h-4 w-4" />
           </span>
         ) : (
@@ -326,7 +361,7 @@ function ChatView({
                 if (e.key === 'Escape') setEditingTitle(false)
               }}
               aria-label="Chat title"
-              className="w-full rounded border border-slate-200 px-1.5 py-0.5 text-sm font-semibold text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              className="w-full rounded border border-slate-200 px-1.5 py-0.5 text-base font-semibold text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:text-sm"
             />
           ) : (
             <button
@@ -348,13 +383,31 @@ function ChatView({
               )}
             </button>
           )}
-          {isWorkspace && <p className="mt-0.5 text-xs text-slate-500">Private · saved automatically</p>}
+          {isWorkspace && (
+            <p className="mt-0.5 hidden text-xs text-slate-500 sm:block">Private · saved automatically</p>
+          )}
         </div>
+        {isWorkspace && onOpenContext && (
+          <IconButton
+            label={
+              contextCount > 0
+                ? `Workout context, ${contextCount} ${contextCount === 1 ? 'workout' : 'workouts'} attached`
+                : 'Add workout context'
+            }
+            onClick={onOpenContext}
+            dialog
+            expanded={contextOpen}
+          >
+            <Paperclip className="h-4 w-4" />
+          </IconButton>
+        )}
         {infographicSource && (
           <IconButton
             label="Conversation infographic"
             onClick={() => setShowInfographic(true)}
             disabled={chat.running}
+            dialog
+            expanded={showInfographic}
           >
             <Layers className="h-4 w-4" />
           </IconButton>
@@ -375,7 +428,7 @@ function ChatView({
       {/* Settings */}
       <div
         className={clsx(
-          'space-y-2 border-b border-slate-100',
+          'shrink-0 space-y-2 border-b border-slate-100',
           isWorkspace ? 'px-4 py-2.5 sm:px-5' : 'px-3 py-2.5',
         )}
       >
@@ -414,7 +467,7 @@ function ChatView({
               disabled={chat.running}
               placeholder="model id"
               aria-label="Custom model id"
-              className="h-8 w-32 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-900 placeholder:text-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              className="h-8 w-32 rounded-lg border border-slate-200 bg-white px-2 text-base text-slate-900 placeholder:text-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:text-xs"
             />
           )}
           {efforts.length > 0 && (
@@ -454,7 +507,7 @@ function ChatView({
               onChange={(e) => chat.setWorkoutPrompt(e.target.value)}
               rows={3}
               aria-label="Per-workout analysis prompt"
-              className="w-full resize-y rounded-lg border border-slate-200 p-2 text-xs text-slate-700 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              className="w-full resize-none rounded-lg border border-slate-200 p-2 text-base text-slate-700 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:resize-y sm:text-xs"
             />
             <div className="flex items-center justify-between gap-2">
               <p className="text-[11px] text-slate-500">
@@ -478,7 +531,7 @@ function ChatView({
       {attachedCount > 0 && (
         <div
           className={clsx(
-            'flex flex-wrap items-center gap-1.5 border-b border-slate-100 py-2',
+            'flex shrink-0 flex-wrap items-center gap-1.5 border-b border-slate-100 py-2',
             isWorkspace ? 'px-4 sm:px-5' : 'px-3',
           )}
         >
@@ -518,12 +571,12 @@ function ChatView({
         suggestions={suggestions}
         onSubmit={submit}
         isWorkspace={isWorkspace}
-        endRef={endRef}
+        scrollRef={transcriptRef}
       />
 
       {/* Composer */}
       {isWorkspace ? (
-        <div className="border-t border-slate-100 bg-slate-50/70 p-3 sm:p-4">
+        <div className="shrink-0 border-t border-slate-100 bg-slate-50/70 p-3 sm:p-4">
           <div className="mx-auto max-w-3xl">
             <div className="rounded-xl border border-slate-300 bg-white p-2 transition-colors focus-within:border-brand-500 focus-within:ring-1 focus-within:ring-brand-500 motion-reduce:transition-none">
               <textarea
@@ -543,7 +596,7 @@ function ChatView({
                     : 'Ask anything about your training…'
                 }
                 aria-label="Message"
-                className="max-h-40 min-h-[4.5rem] w-full resize-y border-0 bg-transparent px-2 py-1.5 text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none"
+                className="max-h-40 min-h-[4.5rem] w-full resize-none border-0 bg-transparent px-2 py-1.5 text-base text-slate-900 placeholder:text-slate-500 focus:outline-none sm:resize-y sm:text-sm"
               />
               <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-1 pt-2">
                 <span className="text-xs text-slate-500">Enter to send · Shift+Enter for a new line</span>
@@ -568,7 +621,7 @@ function ChatView({
           </div>
         </div>
       ) : (
-        <div className="border-t border-slate-100 p-3">
+        <div className="shrink-0 border-t border-slate-100 p-3">
           <div className="flex items-end gap-2">
             <textarea
               ref={inputRef}
@@ -587,7 +640,7 @@ function ChatView({
                   : 'Ask anything — e.g. “compare my last 3 long runs”'
               }
               aria-label="Message"
-              className="max-h-32 min-h-[44px] flex-1 resize-y rounded-lg border border-slate-200 p-2.5 text-sm placeholder:text-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              className="max-h-32 min-h-[44px] flex-1 resize-none rounded-lg border border-slate-200 p-2.5 text-base placeholder:text-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:resize-y sm:text-sm"
             />
             {chat.running ? (
               <Button variant="secondary" onClick={() => chat.stop()} aria-label="Stop">
@@ -646,7 +699,7 @@ interface ChatTranscriptProps {
   suggestions: string[]
   onSubmit: (text: string) => void
   isWorkspace: boolean
-  endRef: React.RefObject<HTMLDivElement>
+  scrollRef: React.RefObject<HTMLDivElement>
 }
 
 const ChatTranscript = memo(function ChatTranscript({
@@ -657,13 +710,14 @@ const ChatTranscript = memo(function ChatTranscript({
   suggestions,
   onSubmit,
   isWorkspace,
-  endRef,
+  scrollRef,
 }: ChatTranscriptProps) {
   return (
     <div
+      ref={scrollRef}
       aria-live="polite"
       className={clsx(
-        'min-h-0 flex-1 overflow-y-auto',
+        'min-h-0 flex-1 overscroll-contain overflow-y-auto',
         isWorkspace ? 'px-4 py-6 sm:px-6 sm:py-8' : 'px-3 py-4',
       )}
     >
@@ -715,7 +769,6 @@ const ChatTranscript = memo(function ChatTranscript({
                 {error}
               </div>
             )}
-            <div ref={endRef} />
           </div>
         )}
       </div>
@@ -768,13 +821,13 @@ function HistoryView({ mode, onClose }: { mode: ChatSurfaceMode; onClose: () => 
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search chats…"
               aria-label="Search saved chats"
-              className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-8 pr-2 text-sm text-slate-900 placeholder:text-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-8 pr-2 text-base text-slate-900 placeholder:text-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:text-sm"
             />
           </div>
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto">
         {chat.chatsLoading ? (
           <div className="space-y-2 p-3">
             {[0, 1, 2, 3].map((i) => (
@@ -915,11 +968,15 @@ function IconButton({
   label,
   onClick,
   disabled = false,
+  dialog = false,
+  expanded,
   children,
 }: {
   label: string
   onClick: () => void
   disabled?: boolean
+  dialog?: boolean
+  expanded?: boolean
   children: React.ReactNode
 }) {
   return (
@@ -928,6 +985,8 @@ function IconButton({
       onClick={onClick}
       disabled={disabled}
       aria-label={label}
+      aria-haspopup={dialog ? 'dialog' : undefined}
+      aria-expanded={dialog ? expanded : undefined}
       title={label}
       className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-40"
     >
