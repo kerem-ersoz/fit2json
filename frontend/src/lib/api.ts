@@ -1,5 +1,5 @@
 // Typed client for the FitSift JSON API.
-// Azure builds can target a private tailnet URL; local and bundled builds retain
+// Remote builds can target a private tailnet URL; local and bundled builds retain
 // the same-origin /api default.
 
 const configuredApiBase = import.meta.env.VITE_API_BASE_URL?.trim()

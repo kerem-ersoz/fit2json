@@ -54,10 +54,11 @@ VITE_BASE_PATH=/fitsift/ npm run build
 FITSIFT_BASE_PATH=/fitsift fit2json serve
 ```
 
-## Azure frontend + private phone access
+## GitHub Pages frontend + private phone access
 
-This keeps the Vite SPA in Azure while the API, workout files, and analysis tools remain
-on this computer. The phone must be signed into the same Tailscale network.
+The production SPA is served from `https://www.ker.ooo/fitsift/` while the API, workout
+files, and analysis tools remain on this computer. The phone must be signed into the same
+Tailscale network.
 
 ### 1. Connect the local API to the tailnet
 
@@ -82,39 +83,31 @@ curl https://computer.example.ts.net/api/health
 Use Tailscale **Serve**, not Funnel. Funnel would make the unauthenticated FastAPI service
 public. Install Tailscale on the phone and sign into the same tailnet.
 
-### 2. Create the Azure Static Web App
+### 2. Build for the `/fitsift/` path
 
-Create an empty Free-tier Static Web App. The names below are examples; the app name must
-be globally unique.
+The production build needs both the GitHub Pages base path and the private API endpoint:
 
 ```bash
-az group create --name fitsift-personal --location westus2
-az staticwebapp create \
-  --name YOUR_UNIQUE_FITSIFT_NAME \
-  --resource-group fitsift-personal \
-  --location westus2 \
-  --sku Free
+VITE_BASE_PATH=/fitsift/ \
+VITE_API_BASE_URL=https://computer.example.ts.net/api \
+npm run build
 ```
 
-In GitHub repository settings, configure:
+The `kerem-ersoz/kerem-ersoz.github.io` repository owns production deployment. Its
+`Deploy site and FitSift to Pages` workflow checks out this repository, builds the SPA,
+assembles it under `/fitsift/`, and deploys one ephemeral Pages artifact. Built files are
+not committed to either repository.
 
-- Actions variable `VITE_API_BASE_URL`:
-  `https://computer.example.ts.net/api`
-- Actions secret `AZURE_STATIC_WEB_APPS_API_TOKEN`: the deployment token from the Azure
-  Static Web App's **Manage deployment token** page
+GitHub Pages has no server-side SPA rewrite. The Pages assembly includes a redirect
+limited to `/fitsift/*` so direct navigation and refreshes recover the React Router path
+without changing the homepage's general 404 behavior.
 
-The `Deploy FitSift frontend` workflow builds `frontend/dist` and deploys only on `main`
-or manual dispatch. Pull-request preview sites are intentionally disabled so the API can
-use one exact CORS origin.
+### 3. Restrict the API origin
 
-### 3. Restrict both origins
-
-After Azure assigns the hostname, copy the **Default hostname** from its overview page
-and put that exact origin in the repo-root `.env` used by the local backend. Azure
-hostnames are generated and generally do not match the resource name.
+Put the exact Pages origin in the repo-root `.env` used by the local backend:
 
 ```dotenv
-FITSIFT_CORS_ORIGINS=https://YOUR_GENERATED_HOSTNAME.azurestaticapps.net
+FITSIFT_CORS_ORIGINS=https://www.ker.ooo
 ```
 
 Restart the local web process after changing it:
@@ -124,12 +117,11 @@ Restart the local web process after changing it:
 ./scripts/fitsift web up
 ```
 
-In the Static Web App's role management page, invite your GitHub account with the custom
-role `fitsift_user`. `staticwebapp.config.json` redirects sign-in to GitHub and rejects
-users without that role.
-
-The Azure-hosted shell remains available when this computer is offline, but API-backed
-screens cannot load until the computer and Tailscale are online.
+The static shell is public because GitHub Pages has no built-in private-site
+authentication. The API and personal data remain tailnet-only: devices outside the
+tailnet cannot resolve a working connection to the Tailscale Serve endpoint. The shell
+remains available when this computer is offline, but API-backed screens cannot load
+until the computer and Tailscale are online.
 
 ## Scripts
 
