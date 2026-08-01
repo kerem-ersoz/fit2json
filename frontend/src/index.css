@@ -30,6 +30,13 @@ html.analyze-viewport-locked body {
   height: 100%;
 }
 
+@media (pointer: coarse) {
+  html,
+  body {
+    touch-action: pan-x pan-y;
+  }
+}
+
 .scrollbar-hidden {
   -ms-overflow-style: none;
   scrollbar-width: none;
