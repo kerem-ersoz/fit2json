@@ -6,12 +6,17 @@ product
 
 ## Users
 
-A single, data-literate endurance athlete — the tool's owner — who exports their
-own workouts from Garmin Connect or Strava. They are privacy-conscious and
-local-first by choice (no third-party API keys, local LLMs supported) and
-comfortable running a CLI to seed and sync data.
+Data-literate endurance athletes — runners, cyclists, triathletes — who want to make sense of
+their *own* training and keep it private. They value data ownership and calm over social feeds
+and engagement mechanics. FitSift is **local-first**: the workout library and training memory
+live in a local database the athlete owns, and analysis runs on the model of their choice —
+fully local, or their own cloud key. A one-time import seeds history; after that it stays in
+sync in the background (no CLI required).
 
-Their job: make sense of their own training. They open FitSift to browse their
+**Also served:** coaches who follow several athletes' training over time — the paid,
+multi-athlete tier.
+
+Their job: make sense of their training. They open FitSift to browse their
 workout library, inspect a single activity in depth (splits, HR, map, charts),
 run an LLM analysis against a custom prompt, and revisit a growing "training
 memory" corpus to reason about progress over time. Context is split between
@@ -47,7 +52,7 @@ trusts the user to read data.
 
 - **Consumer-social fitness** (the primary anti-reference): feeds, likes, kudos,
   leaderboards, follower counts, social comparison. FitSift is private and
-  single-user; it must never borrow social-network patterns.
+  personal; it must never borrow social-network patterns.
 - **Loud gamification:** streaks, confetti, badges, dopamine mechanics.
 - **Cluttered "pro" dashboards:** every widget on screen at once, nothing
   prioritized.
@@ -60,8 +65,9 @@ trusts the user to read data.
    Layout and color exist to make the data legible, not to decorate it.
 2. **Calm over loud.** Optimize for insight, not engagement. No gamification, no
    dopamine tricks, no attention-grabbing motion.
-3. **Private by design.** Single-user and local-first. Never reach for social,
-   comparison, or feed patterns — they contradict what this tool is.
+3. **Private by design.** Local-first by default — your data lives with you, and
+   you choose where analysis runs (fully local, or your own cloud key). Never reach
+   for social, comparison, or feed patterns — they contradict what this tool is.
 4. **Legible at a glance, deep on demand.** Summary first, detail when asked.
    Progressive disclosure keeps each screen quiet while depth stays one tap away.
 5. **Restraint by default, expression where it counts.** The interface is
