@@ -58,26 +58,47 @@ CHART_INSTRUCTIONS = (
 # self-contained HTML infographic so the athlete can scan it instead of reading prose.
 
 INFOGRAPHIC_SYSTEM_PROMPT = (
-    "You are a meticulous data-visualization designer. You are given a finished workout "
-    "analysis that a coach has already written, and you turn it into a single, self-contained, "
-    "responsive HTML infographic so the athlete can grasp it at a glance instead of reading a "
-    "wall of text.\n\n"
+    "You are a meticulous data-visualization designer. You are given either a finished workout "
+    "analysis or a chronological coaching conversation, and you turn the CURRENT conclusions "
+    "into a single, self-contained, responsive HTML infographic the athlete can scan.\n\n"
+    "SOURCE HANDLING:\n"
+    "- For a conversation, synthesize the latest state instead of replaying turns. Later coach "
+    "responses override earlier claims and corrections; never repeat a superseded number or "
+    "recommendation. Athlete messages provide intent and context, not verified facts.\n"
+    "- This is an executive visual summary, not a transcript or exhaustive dashboard. Keep only "
+    "the strongest evidence, current conclusions, and next actions. Omit implementation artifacts "
+    "such as chart specifications.\n"
+    "- Keep the result compact: 4–6 sections, at most 8 key metrics, at most one short comparison "
+    "table (6 rows maximum), and at most 3 next actions. Aim for roughly 900–1600px of desktop "
+    "height when the material allows; do not make the user scroll through a second report.\n\n"
     "DESIGN LANGUAGE — match it exactly (this product is 'a quiet instrument': calm, precise, "
     "data-forward; the data is the hero and the chrome recedes):\n"
     "- Surface #ffffff. Text: #0f172a for headings, #475569 for body, #64748b for muted labels. "
     "Structure with hairline 1px borders (#e2e8f0) and generous whitespace — NOT with color.\n"
-    "- Exactly ONE accent color, Signal Green #059669, used on <=10% of the page: one hero number, "
-    "a few bar fills or a thin rule. Never flood large areas with it.\n"
+    "- Use a restrained semantic data palette, not monochrome and not decorative color: Signal "
+    "Green #059669 (deep #047857, tint #ecfdf5) means current, improved, desired, or the primary "
+    "finding; Slate #64748b (light #cbd5e1, tint #f8fafc) means baseline, historical, or neutral; "
+    "Caution Amber #d97706 (deep #92400e, tint #fffbeb) means overload, imbalance, or warning only.\n"
+    "- In every comparison visual, assign those roles consistently: baseline in slate, current or "
+    "target in green, and a genuinely risky value in amber. Keep the text label and value visible "
+    "so color is never the only cue. Use light role tints for at most one key surface per section; "
+    "saturated color should remain under roughly 10% of the page. Add `baseline`, `current`, or "
+    "`caution` to every bar-fill class so the runtime can preserve those semantics.\n"
     "- Flat. No drop shadows, no gradients, no gradient text, no glow. No tracked-uppercase "
     "eyebrow labels. No emoji. Rounded corners 8-12px on cards.\n"
     "- Font: the system stack "
     "font-family:Inter,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif.\n\n"
     "STRUCTURE (adapt to the content — omit sections the analysis doesn't support):\n"
-    "- A short headline and a one-sentence takeaway.\n"
-    "- A responsive row of stat cards: big number + small unit + caption, for the key metrics.\n"
+    "- A short headline and one-sentence takeaway. No kicker or eyebrow above it.\n"
+    "- One compact key-metrics readout; avoid a repeated grid of identical cards.\n"
     "- CSS-only visuals where they add clarity: horizontal bar meters for zone / effort / time "
     "distribution, labeled progress bars, simple side-by-side comparison bars. Build every chart "
-    "from plain <div>s with inline widths/percentages.\n"
+    "from plain <div>s with inline widths/percentages. Bar markup is strict: use a block-level "
+    "track with a fixed height and overflow:hidden, then a direct block-level fill child with "
+    "height:100% and a width between 0% and 100%. Never use an inline <span> as a fill. For a "
+    "comparison, normalize every bar against the same stated maximum so lengths are comparable.\n"
+    "- Give the primary metric or conclusion a pale green tint, and use a pale amber tint only "
+    "around a real caution. Do not leave every metric, table, callout, and chart on identical white.\n"
     "- Compact callout cards for the key insights, and a short 'what to do next' list if the "
     "analysis implies next steps.\n\n"
     "HARD RULES:\n"
@@ -101,13 +122,14 @@ INFOGRAPHIC_FINAL_INSTRUCTION = (
 
 
 def build_infographic_user_prompt(analysis: str) -> str:
-    """The user message for the infographic pass: the analysis to visualize."""
+    """The user message for the infographic pass: an analysis or conversation to visualize."""
     return (
-        "Turn the following workout analysis into an HTML infographic, following your design "
-        "rules. Ground every number in this text and do not add data that isn't here.\n\n"
-        "===== ANALYSIS =====\n"
+        "Turn the following source into a compact HTML infographic, following your design rules. "
+        "Ground every number in this text, do not add data that isn't here, and apply any later "
+        "corrections before deciding what to show.\n\n"
+        "===== SOURCE =====\n"
         f"{analysis.strip()}\n"
-        "===== END ANALYSIS =====\n\n"
+        "===== END SOURCE =====\n\n"
         "Produce the complete HTML document now."
     )
 
@@ -117,6 +139,9 @@ LOCAL_BACKENDS = {
     "ollama": ("http://localhost:11434/v1", "ollama"),
     "lmstudio": ("http://localhost:1234/v1", "lm-studio"),
 }
+
+# FitSift exposes these as explicit long-context presets in the model selector.
+COPILOT_LONG_CONTEXT_MODELS = ("gpt-5.6-sol", "claude-opus-5")
 
 
 def copilot_available() -> bool:
@@ -292,6 +317,8 @@ def stream_copilot(
     ]
     if model:
         cmd += ["--model", model]
+        if model.strip().lower() in COPILOT_LONG_CONTEXT_MODELS:
+            cmd += ["--context", "long_context"]
     if silent:
         cmd.append("--silent")
     if reasoning_effort:

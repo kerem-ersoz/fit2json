@@ -79,7 +79,7 @@ interface ChatContextValue {
   send: (text: string) => Promise<void>
   stop: () => void
   newChat: () => void
-  resumeChat: (id: string) => Promise<void>
+  resumeChat: (id: string, options?: { openPanel?: boolean }) => Promise<void>
   deleteChat: (id: string) => Promise<void>
   renameChat: (title: string) => Promise<void>
 }
@@ -292,7 +292,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  const resumeChat = useCallback((id: string) => loadChat(id, true), [loadChat])
+  const resumeChat = useCallback(
+    (id: string, options?: { openPanel?: boolean }) => loadChat(id, options?.openPanel ?? true),
+    [loadChat],
+  )
 
   const deleteChat = useCallback(
     async (id: string) => {

@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { clsx } from 'clsx'
 import {
   Check,
   ChevronLeft,
   Clock,
+  Layers,
   Loader2,
   MessageSquare,
   Paperclip,
@@ -22,11 +24,17 @@ import { sportMeta } from '../../lib/sport'
 import { formatDate } from '../../lib/format'
 import { Button } from '../../components/ui/Button'
 import { MarkdownView } from '../../components/ui/Markdown'
-import { AnalysisLens } from '../analyze/AnalysisLens'
+import { Sheet } from '../../components/ui/Sheet'
+import { InfographicView } from '../analyze/InfographicView'
 import { CUSTOM_MODEL, useChat, type Msg } from './ChatProvider'
 
 const selectClass =
   'h-8 max-w-[10rem] rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50'
+
+const MODEL_LABELS: Record<string, string> = {
+  'gpt-5.6-sol': 'GPT-5.6 Sol · Long context',
+  'claude-opus-5': 'Claude Opus 5 · Long context',
+}
 
 function backendOptions(copilot: boolean) {
   const opts = [
@@ -78,17 +86,53 @@ function groupByRecency(chats: ChatSummaryLite[]) {
   ].filter((g) => g.items.length > 0)
 }
 
-/**
- * Global, resumable conversation pane. Lives above every tab as a right-side drawer.
- * Persistence, streaming, and attached-workout state come from {@link useChat}; this
- * component is the surface: header + settings + transcript + composer, plus a history
- * view for resuming past chats.
- */
+const CHART_BLOCK = /```(?:fitsift-chart|vega-lite|vegalite)[^\n]*\n[\s\S]*?```/gi
+
+function infographicTranscript(messages: Msg[]): string {
+  let lastAssistant = -1
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].role === 'assistant' && messages[i].content.trim()) {
+      lastAssistant = i
+      break
+    }
+  }
+  if (lastAssistant < 0) return ''
+
+  const turns = messages
+    .slice(0, lastAssistant + 1)
+    .filter((message) => message.content.trim())
+    .map((message) => {
+      const content = message.content.replace(CHART_BLOCK, '[Chart omitted from transcript]').trim()
+      return `[${message.role === 'user' ? 'Athlete' : 'Coach'}]\n${content}`
+    })
+
+  return [
+    'Chronological training conversation. Later coach responses may correct earlier claims.',
+    ...turns,
+  ].join('\n\n')
+}
+
+type ChatSurfaceMode = 'drawer' | 'workspace'
+
+/** The primary Analyze experience: a persistent conversation with room for long answers. */
+export function ChatWorkspace({ className }: { className?: string }) {
+  return (
+    <section
+      aria-label="Training conversation"
+      className={clsx(
+        'flex min-h-[34rem] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white',
+        className,
+      )}
+    >
+      <ChatSurface mode="workspace" />
+    </section>
+  )
+}
+
+/** Global, resumable conversation pane used as a drawer outside the Analyze workspace. */
 export function ChatDock() {
   const chat = useChat()
   const { open, setOpen } = chat
-  const [view, setView] = useState<'chat' | 'history'>('chat')
-  const inputRef = useRef<HTMLTextAreaElement>(null)
   // `mounted` keeps the drawer in the DOM briefly while it animates out; `shown` drives
   // the slide/fade. When neither is set the drawer renders nothing at all — so a closed
   // pane can never affect layout, scroll width, or intercept clicks in any engine.
@@ -107,23 +151,17 @@ export function ChatDock() {
     return () => window.clearTimeout(t)
   }, [open])
 
-  // Close on Escape; focus the composer when the drawer opens.
+  // Close on Escape.
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false)
     }
     window.addEventListener('keydown', onKey)
-    const t = window.setTimeout(() => inputRef.current?.focus(), 60)
     return () => {
       window.removeEventListener('keydown', onKey)
-      window.clearTimeout(t)
     }
   }, [open, setOpen])
-
-  useEffect(() => {
-    if (open) setView('chat')
-  }, [open])
 
   // Fully absent when closed — no fixed overlay left behind.
   if (!mounted && !open) return null
@@ -148,35 +186,68 @@ export function ChatDock() {
         }`}
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
-        {view === 'history' ? (
-          <HistoryView onClose={() => setView('chat')} />
-        ) : (
-          <ChatView inputRef={inputRef} onShowHistory={() => setView('history')} />
-        )}
+        <ChatSurface mode="drawer" active={open} onClose={() => setOpen(false)} />
       </aside>
     </>
   )
 }
 
+function ChatSurface({
+  mode,
+  active = false,
+  onClose,
+}: {
+  mode: ChatSurfaceMode
+  active?: boolean
+  onClose?: () => void
+}) {
+  const [view, setView] = useState<'chat' | 'history'>('chat')
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    if (!active) return
+    setView('chat')
+    const t = window.setTimeout(() => inputRef.current?.focus(), 60)
+    return () => window.clearTimeout(t)
+  }, [active])
+
+  return view === 'history' ? (
+    <HistoryView mode={mode} onClose={() => setView('chat')} />
+  ) : (
+    <ChatView
+      mode={mode}
+      inputRef={inputRef}
+      onShowHistory={() => setView('history')}
+      onClose={onClose}
+    />
+  )
+}
+
 function ChatView({
+  mode,
   inputRef,
   onShowHistory,
+  onClose,
 }: {
+  mode: ChatSurfaceMode
   inputRef: React.RefObject<HTMLTextAreaElement>
   onShowHistory: () => void
+  onClose?: () => void
 }) {
   const chat = useChat()
+  const isWorkspace = mode === 'workspace'
   const { data: config } = useQuery({ queryKey: ['config'], queryFn: api.config })
   const { data: activities } = useQuery({ queryKey: ['activities'], queryFn: api.activities })
 
   const { data: modelInfo } = useQuery({
     queryKey: ['models', chat.backend],
     queryFn: () => api.models(chat.backend),
-    enabled: !!chat.backend && chat.open,
+    enabled: !!chat.backend && (chat.open || isWorkspace),
   })
 
   const [input, setInput] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [showInfographic, setShowInfographic] = useState(false)
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const endRef = useRef<HTMLDivElement>(null)
@@ -202,6 +273,7 @@ function ChatView({
   )
   const attachedCount = chat.activityIds.length
   const efforts = modelInfo?.efforts ?? []
+  const infographicSource = useMemo(() => infographicTranscript(chat.messages), [chat.messages])
 
   const suggestions = useMemo(() => {
     if (attachedCount > 1)
@@ -226,40 +298,63 @@ function ChatView({
   return (
     <>
       {/* Header */}
-      <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2.5">
-        <MessageSquare className="h-4 w-4 shrink-0 text-brand-600" />
-        {editingTitle ? (
-          <input
-            value={titleDraft}
-            autoFocus
-            onChange={(e) => setTitleDraft(e.target.value)}
-            onBlur={commitTitle}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') commitTitle()
-              if (e.key === 'Escape') setEditingTitle(false)
-            }}
-            aria-label="Chat title"
-            className="min-w-0 flex-1 rounded border border-slate-200 px-1.5 py-0.5 text-sm font-semibold text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-          />
+      <div
+        className={clsx(
+          'flex items-center gap-2 border-b border-slate-100',
+          isWorkspace ? 'px-4 py-3 sm:px-5' : 'px-3 py-2.5',
+        )}
+      >
+        {isWorkspace ? (
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700">
+            <MessageSquare className="h-4 w-4" />
+          </span>
         ) : (
-          <button
-            type="button"
-            onClick={() => {
-              if (!chat.chatId) return
-              setTitleDraft(chat.title)
-              setEditingTitle(true)
-            }}
-            disabled={!chat.chatId}
-            title={chat.chatId ? 'Rename chat' : undefined}
-            className="group flex min-w-0 flex-1 items-center gap-1.5 rounded text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+          <MessageSquare className="h-4 w-4 shrink-0 text-brand-600" />
+        )}
+        <div className="min-w-0 flex-1">
+          {editingTitle ? (
+            <input
+              value={titleDraft}
+              autoFocus
+              onChange={(e) => setTitleDraft(e.target.value)}
+              onBlur={commitTitle}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitTitle()
+                if (e.key === 'Escape') setEditingTitle(false)
+              }}
+              aria-label="Chat title"
+              className="w-full rounded border border-slate-200 px-1.5 py-0.5 text-sm font-semibold text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                if (!chat.chatId) return
+                setTitleDraft(chat.title)
+                setEditingTitle(true)
+              }}
+              disabled={!chat.chatId}
+              title={chat.chatId ? 'Rename chat' : undefined}
+              className="group flex w-full min-w-0 items-center gap-1.5 rounded text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            >
+              <span className="truncate text-sm font-semibold text-slate-900">
+                {chat.title || 'New conversation'}
+              </span>
+              {chat.chatId && (
+                <Pencil className="h-3 w-3 shrink-0 text-slate-300 group-hover:text-slate-500" />
+              )}
+            </button>
+          )}
+          {isWorkspace && <p className="mt-0.5 text-xs text-slate-500">Private · saved automatically</p>}
+        </div>
+        {infographicSource && (
+          <IconButton
+            label="Conversation infographic"
+            onClick={() => setShowInfographic(true)}
+            disabled={chat.running}
           >
-            <span className="truncate text-sm font-semibold text-slate-900">
-              {chat.title || 'New chat'}
-            </span>
-            {chat.chatId && (
-              <Pencil className="h-3 w-3 shrink-0 text-slate-300 group-hover:text-slate-500" />
-            )}
-          </button>
+            <Layers className="h-4 w-4" />
+          </IconButton>
         )}
         <IconButton label="Chat history" onClick={onShowHistory}>
           <Clock className="h-4 w-4" />
@@ -267,13 +362,20 @@ function ChatView({
         <IconButton label="New chat" onClick={() => chat.newChat()}>
           <Plus className="h-4 w-4" />
         </IconButton>
-        <IconButton label="Close chat" onClick={() => chat.setOpen(false)}>
-          <X className="h-4 w-4" />
-        </IconButton>
+        {onClose && (
+          <IconButton label="Close chat" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </IconButton>
+        )}
       </div>
 
       {/* Settings */}
-      <div className="space-y-2 border-b border-slate-100 px-3 py-2.5">
+      <div
+        className={clsx(
+          'space-y-2 border-b border-slate-100',
+          isWorkspace ? 'px-4 py-2.5 sm:px-5' : 'px-3 py-2.5',
+        )}
+      >
         <div className="flex flex-wrap items-center gap-2">
           <select
             value={chat.backend}
@@ -297,7 +399,7 @@ function ChatView({
           >
             {(modelInfo?.models ?? ['auto']).map((m) => (
               <option key={m} value={m}>
-                {m}
+                {MODEL_LABELS[m] ?? m}
               </option>
             ))}
             {modelInfo?.allow_custom && <option value={CUSTOM_MODEL}>Custom…</option>}
@@ -309,7 +411,7 @@ function ChatView({
               disabled={chat.running}
               placeholder="model id"
               aria-label="Custom model id"
-              className="h-8 w-32 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              className="h-8 w-32 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-900 placeholder:text-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
             />
           )}
           {efforts.length > 0 && (
@@ -332,7 +434,7 @@ function ChatView({
             type="button"
             onClick={() => setShowAdvanced((v) => !v)}
             aria-expanded={showAdvanced}
-            className="inline-flex items-center gap-1 rounded text-xs font-medium text-slate-500 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            className="inline-flex min-h-8 items-center gap-1 rounded px-1 text-xs font-medium text-slate-500 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
           >
             <SlidersHorizontal className="h-3.5 w-3.5" /> Analysis prompt
           </button>
@@ -352,7 +454,7 @@ function ChatView({
               className="w-full resize-y rounded-lg border border-slate-200 p-2 text-xs text-slate-700 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
             />
             <div className="flex items-center justify-between gap-2">
-              <p className="text-[11px] text-slate-400">
+              <p className="text-[11px] text-slate-500">
                 Prompt for each per-workout analysis when comparing 2+ workouts.
               </p>
               {config?.workout_prompt_default && chat.workoutPrompt !== config.workout_prompt_default && (
@@ -371,7 +473,12 @@ function ChatView({
 
       {/* Attached workouts */}
       {attachedCount > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-100 px-3 py-2">
+        <div
+          className={clsx(
+            'flex flex-wrap items-center gap-1.5 border-b border-slate-100 py-2',
+            isWorkspace ? 'px-4 sm:px-5' : 'px-3',
+          )}
+        >
           {attached.map((a) => {
             const { label } = sportMeta(a.sport)
             return (
@@ -393,7 +500,7 @@ function ChatView({
           })}
           {/* Ids whose activity summary isn't loaded still count as attached. */}
           {attachedCount > attached.length && (
-            <span className="text-xs text-slate-400">
+            <span className="text-xs text-slate-500">
               +{attachedCount - attached.length} more
             </span>
           )}
@@ -401,103 +508,185 @@ function ChatView({
       )}
 
       {/* Transcript */}
-      <div className="flex-1 overflow-y-auto px-3 py-4">
-        {chat.messages.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-50 text-brand-600">
-              <Sparkles className="h-6 w-6" />
-            </div>
-            <p className="text-sm font-medium text-slate-700">
-              {attachedCount > 0
-                ? attachedCount === 1
-                  ? 'Ask about this workout'
-                  : `Ask about these ${attachedCount} workouts`
-                : 'Ask about your training'}
-            </p>
-            <p className="max-w-xs text-sm text-slate-500">
-              {attachedCount > 0
-                ? 'Answers stream in below. This conversation is saved so you can pick it up later.'
-                : 'Describe workouts in your question, or select some on the Analyze tab. Saved for later.'}
-            </p>
-            <div className="mt-1 flex flex-wrap justify-center gap-2">
-              {suggestions.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => submit(s)}
-                  className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {chat.messages.map((m) => (
-              <MessageBubble
-                key={m.id}
-                msg={m}
-                running={chat.running}
-                lens={{
-                  backend: chat.backend || undefined,
-                  model:
-                    !chat.effectiveModel || chat.effectiveModel === 'auto'
-                      ? undefined
-                      : chat.effectiveModel,
-                  reasoningEffort: chat.effort || undefined,
-                }}
-              />
-            ))}
-            {chat.error && (
-              <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                {chat.error}
-              </div>
-            )}
-            <div ref={endRef} />
-          </div>
+      <div
+        aria-live="polite"
+        className={clsx(
+          'min-h-0 flex-1 overflow-y-auto',
+          isWorkspace ? 'px-4 py-6 sm:px-6 sm:py-8' : 'px-3 py-4',
         )}
+      >
+        <div className={clsx('h-full', isWorkspace && 'mx-auto max-w-3xl')}>
+          {chat.messages.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+              <div
+                className={clsx(
+                  'flex items-center justify-center rounded-full bg-brand-50 text-brand-700',
+                  isWorkspace ? 'h-14 w-14' : 'h-12 w-12',
+                )}
+              >
+                <Sparkles className={isWorkspace ? 'h-6 w-6' : 'h-5 w-5'} />
+              </div>
+              <p className={clsx('font-semibold text-slate-900', isWorkspace ? 'text-base' : 'text-sm')}>
+                {attachedCount > 0
+                  ? attachedCount === 1
+                    ? 'What do you want to understand about this workout?'
+                    : `What do you want to understand about these ${attachedCount} workouts?`
+                  : 'What do you want to understand about your training?'}
+              </p>
+              <p className={clsx('text-sm text-slate-500', isWorkspace ? 'max-w-md' : 'max-w-xs')}>
+                {attachedCount > 0
+                  ? 'Ask in your own words. The answer streams here and the conversation stays available for later.'
+                  : isWorkspace
+                    ? 'Ask across your full training history, or attach specific workouts from the context panel for a focused comparison.'
+                    : 'Describe the workouts in your question, or attach specific sessions from Analyze.'}
+              </p>
+              <div className="mt-2 flex max-w-xl flex-wrap justify-center gap-2">
+                {suggestions.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => submit(s)}
+                    className="min-h-11 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 motion-reduce:transition-none"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-5">
+              {chat.messages.map((m) => (
+                <MessageBubble key={m.id} msg={m} running={chat.running} />
+              ))}
+              {chat.error && (
+                <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  {chat.error}
+                </div>
+              )}
+              <div ref={endRef} />
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Composer */}
-      <div className="border-t border-slate-100 p-3">
-        <div className="flex items-end gap-2">
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault()
-                submit(input)
+      {isWorkspace ? (
+        <div className="border-t border-slate-100 bg-slate-50/70 p-3 sm:p-4">
+          <div className="mx-auto max-w-3xl">
+            <div className="rounded-xl border border-slate-300 bg-white p-2 transition-colors focus-within:border-brand-500 focus-within:ring-1 focus-within:ring-brand-500 motion-reduce:transition-none">
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault()
+                    submit(input)
+                  }
+                }}
+                rows={2}
+                placeholder={
+                  attachedCount > 0
+                    ? 'Ask a question about the workouts in context…'
+                    : 'Ask anything about your training…'
+                }
+                aria-label="Message"
+                className="max-h-40 min-h-[4.5rem] w-full resize-y border-0 bg-transparent px-2 py-1.5 text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none"
+              />
+              <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-1 pt-2">
+                <span className="text-xs text-slate-500">⌘/Ctrl + Enter to send</span>
+                {chat.running ? (
+                  <Button variant="secondary" onClick={() => chat.stop()}>
+                    <Square className="h-4 w-4" />
+                    Stop
+                  </Button>
+                ) : (
+                  <Button onClick={() => submit(input)} disabled={!input.trim()}>
+                    <Send className="h-4 w-4" />
+                    Send
+                  </Button>
+                )}
+              </div>
+            </div>
+            {chat.running && (
+              <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Thinking…
+              </p>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="border-t border-slate-100 p-3">
+          <div className="flex items-end gap-2">
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault()
+                  submit(input)
+                }
+              }}
+              rows={1}
+              placeholder={
+                attachedCount > 0
+                  ? 'Ask a question…  (⌘/Ctrl+Enter)'
+                  : 'Ask anything — e.g. “compare my last 3 long runs”'
               }
-            }}
-            rows={1}
-            placeholder={attachedCount > 0 ? 'Ask a question…  (⌘/Ctrl+Enter)' : 'Ask anything — e.g. “compare my last 3 long runs”'}
-            aria-label="Message"
-            className="max-h-32 min-h-[44px] flex-1 resize-y rounded-lg border border-slate-200 p-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-          />
-          {chat.running ? (
-            <Button variant="secondary" onClick={() => chat.stop()} aria-label="Stop">
-              <Square className="h-4 w-4" />
-            </Button>
-          ) : (
-            <Button onClick={() => submit(input)} disabled={!input.trim()} aria-label="Send">
-              <Send className="h-4 w-4" />
-            </Button>
+              aria-label="Message"
+              className="max-h-32 min-h-[44px] flex-1 resize-y rounded-lg border border-slate-200 p-2.5 text-sm placeholder:text-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            />
+            {chat.running ? (
+              <Button variant="secondary" onClick={() => chat.stop()} aria-label="Stop">
+                <Square className="h-4 w-4" />
+              </Button>
+            ) : (
+              <Button onClick={() => submit(input)} disabled={!input.trim()} aria-label="Send">
+                <Send className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+          {chat.running && (
+            <p className="mt-1.5 flex items-center gap-1.5 text-xs text-slate-500">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Thinking…
+            </p>
           )}
         </div>
-        {chat.running && (
-          <p className="mt-1.5 flex items-center gap-1.5 text-xs text-slate-500">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Thinking…
-          </p>
-        )}
-      </div>
+      )}
+
+      {showInfographic && (
+        <Sheet
+          title="Conversation infographic"
+          subtitle="A current visual summary; later corrections override earlier claims"
+          icon={
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700">
+              <Layers className="h-4 w-4" />
+            </span>
+          }
+          size="wide"
+          onClose={() => setShowInfographic(false)}
+          contentClassName="scrollbar-hidden flex-1 overflow-y-auto bg-slate-50/60 p-4"
+        >
+          <InfographicView
+            source={{
+              kind: 'ephemeral',
+              analysis: infographicSource,
+              backend: chat.backend || undefined,
+              model:
+                !chat.effectiveModel || chat.effectiveModel === 'auto'
+                  ? undefined
+                  : chat.effectiveModel,
+              reasoningEffort: chat.effort || undefined,
+            }}
+          />
+        </Sheet>
+      )}
     </>
   )
 }
 
-function HistoryView({ onClose }: { onClose: () => void }) {
+function HistoryView({ mode, onClose }: { mode: ChatSurfaceMode; onClose: () => void }) {
   const chat = useChat()
   const [query, setQuery] = useState('')
   const [confirmId, setConfirmId] = useState<string | null>(null)
@@ -542,7 +731,7 @@ function HistoryView({ onClose }: { onClose: () => void }) {
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search chats…"
               aria-label="Search saved chats"
-              className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-8 pr-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-8 pr-2 text-sm text-slate-900 placeholder:text-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
             />
           </div>
         </div>
@@ -585,7 +774,7 @@ function HistoryView({ onClose }: { onClose: () => void }) {
                       active={c.id === chat.chatId}
                       confirming={confirmId === c.id}
                       onResume={() => {
-                        chat.resumeChat(c.id)
+                        chat.resumeChat(c.id, { openPanel: mode === 'drawer' })
                         onClose() // return to the conversation view, not just load it in the background
                       }}
                       onAskDelete={() => setConfirmId(c.id)}
@@ -631,7 +820,7 @@ function ChatRow({
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-medium text-slate-800">{c.title}</span>
             {active && (
-              <span className="shrink-0 rounded-full bg-brand-100 px-1.5 py-px text-[10px] font-semibold text-brand-700">
+              <span className="shrink-0 rounded-full bg-brand-100 px-1.5 py-px text-xs font-semibold text-brand-700">
                 Current
               </span>
             )}
@@ -688,19 +877,22 @@ function ChatRow({
 function IconButton({
   label,
   onClick,
+  disabled = false,
   children,
 }: {
   label: string
   onClick: () => void
+  disabled?: boolean
   children: React.ReactNode
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       aria-label={label}
       title={label}
-      className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+      className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-40"
     >
       {children}
     </button>
@@ -736,11 +928,9 @@ function StepList({ steps, running }: { steps: MapStep[]; running: boolean }) {
 function MessageBubble({
   msg,
   running,
-  lens,
 }: {
   msg: Msg
   running: boolean
-  lens: { backend?: string; model?: string; reasoningEffort?: string }
 }) {
   if (msg.role === 'user') {
     return (
@@ -751,26 +941,11 @@ function MessageBubble({
       </div>
     )
   }
-  const done = !!msg.content.trim() && !running
   return (
     <div className="min-w-0">
       {msg.steps && msg.steps.length > 0 && <StepList steps={msg.steps} running={running} />}
       {msg.content ? (
-        done ? (
-          <AnalysisLens
-            surface="sheet"
-            source={{
-              kind: 'ephemeral',
-              analysis: msg.content,
-              backend: lens.backend,
-              model: lens.model,
-              reasoningEffort: lens.reasoningEffort,
-            }}
-            text={<MarkdownView>{msg.content}</MarkdownView>}
-          />
-        ) : (
-          <MarkdownView>{msg.content}</MarkdownView>
-        )
+        <MarkdownView>{msg.content}</MarkdownView>
       ) : !msg.steps?.length && running ? (
         <p className="text-sm text-slate-400">Waiting for the model…</p>
       ) : null}

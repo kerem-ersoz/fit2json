@@ -404,25 +404,26 @@ def analysis_tier(
 def available_models(backend: str) -> Dict[str, Any]:
     """Selectable models + reasoning-effort levels for a backend.
 
-    - copilot: no list API, so offer 'auto' plus the models actually used before (from the
-      memory corpus) and allow a custom entry; efforts come from the installed CLI.
+    - copilot: no list API, so offer 'auto', FitSift's long-context presets, and models
+      actually used before (from the memory corpus); efforts come from the installed CLI.
     - ollama / lmstudio: live from the OpenAI-compatible ``/v1/models`` endpoint; no efforts.
     """
     from fit2json import analyzer
 
     b = (backend or "").strip().lower()
     if b == "copilot":
+        curated = list(analyzer.COPILOT_LONG_CONTEXT_MODELS)
         seen: List[str] = []
         for entry in _all_memory_entries():
             if (entry.get("backend") or "").strip().lower() != "copilot":
                 continue
             model = (entry.get("model") or "").strip()
-            if model and model.lower() != "auto" and model not in seen:
+            if model and model.lower() != "auto" and model not in curated and model not in seen:
                 seen.append(model)
         seen.sort()
         return {
             "backend": "copilot",
-            "models": ["auto", *seen],
+            "models": ["auto", *curated, *seen],
             "efforts": analyzer.copilot_reasoning_efforts(),
             "allow_custom": True,
             "reachable": analyzer.copilot_available(),

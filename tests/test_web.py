@@ -52,7 +52,9 @@ def test_models_copilot(client):
     assert r.status_code == 200
     body = r.json()
     assert body["backend"] == "copilot"
-    assert body["models"][0] == "auto"  # always offered; fresh corpus has no others yet
+    assert body["models"][0] == "auto"
+    assert "gpt-5.6-sol" in body["models"]
+    assert "claude-opus-5" in body["models"]
     assert body["allow_custom"] is True
     # Effort levels are exposed (from the CLI, or the known fallback when it's absent).
     assert "high" in body["efforts"] and "medium" in body["efforts"]
@@ -536,6 +538,11 @@ def test_infographic_view_serves_stashed_html(client, monkeypatch):
     nonce = csp.split("script-src 'nonce-")[1].split("'")[0]
     assert f'<script nonce="{nonce}">' in v.text
     assert "__fitsift_ig_height" in v.text
+    assert 'id="fitsift-runtime"' in v.text
+    assert "scrollbar-width:none" in v.text
+    assert ".track>.fill{display:block" in v.text
+    assert ".track>.fill.current{background:#059669" in v.text
+    assert ".track>.fill.caution{background:#d97706" in v.text
 
 
 def test_infographic_view_unknown_token_404(client):

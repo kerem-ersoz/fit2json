@@ -1,6 +1,6 @@
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { MessageSquare, Sparkles } from 'lucide-react'
+import { Paperclip, Sparkles } from 'lucide-react'
 import { api } from '../lib/api'
 import { sportMeta } from '../lib/sport'
 import { sortActivities } from '../lib/library'
@@ -8,10 +8,11 @@ import { hrMaxProxy } from '../lib/intensity'
 import { useWorkoutParams } from '../lib/useWorkoutParams'
 import { useCardKeyboardNav } from '../lib/useCardKeyboardNav'
 import { useChat } from '../features/chat/ChatProvider'
+import { ChatWorkspace } from '../features/chat/ChatDock'
 import { WorkoutBrowser } from '../features/analyze/WorkoutBrowser'
-import { ActivityGridSkeleton } from '../features/activities/ActivityGridSkeleton'
-import { EmptyState, ErrorState } from '../components/ui/Feedback'
 import { Button } from '../components/ui/Button'
+import { EmptyState, ErrorState } from '../components/ui/Feedback'
+import { Sheet } from '../components/ui/Sheet'
 
 export function AnalyzePage() {
   const { data, isLoading, isError, error, refetch } = useQuery({
@@ -23,9 +24,14 @@ export function AnalyzePage() {
   // Selection lives in the chat: whatever is selected here is attached to the active
   // conversation, so the chat pane (and any resumed chat) stays in sync.
   const { activityIds, setActivityIds, toggleActivity, setOpen } = useChat()
+  const [contextOpen, setContextOpen] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLUListElement>(null)
-  useCardKeyboardNav(listRef, searchRef)
+  useCardKeyboardNav(listRef, searchRef, contextOpen)
+
+  useEffect(() => {
+    setOpen(false)
+  }, [setOpen])
 
   const selected = useMemo(() => new Set(activityIds), [activityIds])
 
@@ -68,64 +74,115 @@ export function AnalyzePage() {
   }
 
   return (
-    <div>
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3 sm:mb-6">
-        <div>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="mb-4 flex shrink-0 items-start justify-between gap-3 sm:mb-5">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">Analyze</h1>
-          <p className="text-sm text-slate-500">
-            Select workouts, then chat about them. Conversations are saved and resumable.
+          <p className="max-w-2xl text-sm text-slate-500">
+            Ask across your training history. Attach specific workouts for a focused comparison.
           </p>
         </div>
         <Button
-          variant={selectedCount > 0 ? 'primary' : 'secondary'}
-          onClick={() => setOpen(true)}
+          variant="secondary"
+          onClick={() => setContextOpen(true)}
           aria-haspopup="dialog"
+          aria-expanded={contextOpen}
+          className="shrink-0 px-3 sm:px-4"
         >
-          <MessageSquare className="h-4 w-4" />
-          {selectedCount > 0
-            ? `Chat about ${selectedCount} ${selectedCount === 1 ? 'workout' : 'workouts'}`
-            : 'Open chat'}
+          <Paperclip className="h-4 w-4" />
+          <span className="hidden sm:inline">Workout context</span>
+          <span className="sm:hidden">Context</span>
+          <span
+            className={
+              selectedCount > 0
+                ? 'inline-flex min-w-5 items-center justify-center rounded-full bg-brand-50 px-1.5 py-0.5 text-xs font-semibold tabular-nums text-brand-700'
+                : 'inline-flex min-w-5 items-center justify-center rounded-full bg-slate-100 px-1.5 py-0.5 text-xs font-semibold tabular-nums text-slate-600'
+            }
+          >
+            {selectedCount}
+          </span>
         </Button>
       </div>
 
-      {isLoading && <ActivityGridSkeleton />}
+      <ChatWorkspace className="min-h-0 flex-1" />
 
-      {isError && (
-        <ErrorState
-          message={(error as Error)?.message ?? 'Failed to load activities.'}
-          hint="Make sure the FitSift server is running and pointed at a workout library (--library)."
-          onRetry={() => refetch()}
-        />
-      )}
+      {contextOpen && (
+        <Sheet
+          title="Workout context"
+          subtitle={
+            selectedCount > 0
+              ? `${selectedCount} ${selectedCount === 1 ? 'workout' : 'workouts'} attached`
+              : 'Choose workouts to focus the conversation'
+          }
+          icon={
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700">
+              <Paperclip className="h-4 w-4" />
+            </span>
+          }
+          onClose={() => setContextOpen(false)}
+          contentClassName="min-h-0 flex-1 overflow-hidden bg-slate-50/60 p-4"
+        >
+          {isLoading && <ContextSkeleton />}
 
-      {data && !isLoading && data.length === 0 && (
-        <EmptyState
-          icon={<Sparkles className="h-8 w-8 text-slate-300" />}
-          title="Nothing to analyze yet"
-          hint="Add workouts from the Add tab, then come back to analyze them."
-        />
-      )}
+          {isError && (
+            <ErrorState
+              message={(error as Error)?.message ?? 'Failed to load activities.'}
+              hint="Make sure the FitSift server is running and pointed at a workout library (--library)."
+              onRetry={() => refetch()}
+            />
+          )}
 
-      {data && !isLoading && data.length > 0 && (
-        <WorkoutBrowser
-          activities={filtered}
-          selectedIds={selected}
-          onToggle={toggleActivity}
-          onToggleAll={toggleAll}
-          listRef={listRef}
-          hrMax={hrMax}
-          controls={{
-            search,
-            onSearch: (v) => setParam('q', v, ''),
-            sport,
-            sports,
-            onSport: (v) => setParam('sport', v, 'all'),
-            sort,
-            onSort: (v) => setParam('sort', v, 'date'),
-            searchRef,
-          }}
-        />
+          {data && !isLoading && data.length === 0 && (
+            <EmptyState
+              icon={<Sparkles className="h-8 w-8 text-slate-300" />}
+              title="No workouts yet"
+              hint="You can still ask general questions, or add workouts from the Add tab."
+            />
+          )}
+
+          {data && !isLoading && data.length > 0 && (
+            <WorkoutBrowser
+              activities={filtered}
+              selectedIds={selected}
+              onToggle={toggleActivity}
+              onToggleAll={toggleAll}
+              listRef={listRef}
+              hrMax={hrMax}
+              surface="sheet"
+              controls={{
+                search,
+                onSearch: (v) => setParam('q', v, ''),
+                sport,
+                sports,
+                onSport: (v) => setParam('sport', v, 'all'),
+                sort,
+                onSort: (v) => setParam('sort', v, 'date'),
+                searchRef,
+              }}
+            />
+          )}
+        </Sheet>
       )}
+    </div>
+  )
+}
+
+function ContextSkeleton() {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4" aria-label="Loading workouts">
+      <div className="animate-pulse space-y-3">
+        <div className="h-9 rounded-lg bg-slate-100" />
+        <div className="h-7 w-2/3 rounded bg-slate-100" />
+        {[0, 1, 2, 3, 4].map((i) => (
+          <div key={i} className="flex items-center gap-3 border-t border-slate-100 pt-3">
+            <div className="h-8 w-8 rounded-full bg-slate-100" />
+            <div className="flex-1 space-y-2">
+              <div className="h-3 rounded bg-slate-100" />
+              <div className="h-2.5 w-2/3 rounded bg-slate-100" />
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
