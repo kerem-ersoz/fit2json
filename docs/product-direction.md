@@ -1,16 +1,17 @@
 # Product direction — local-first, private AI coach
 
-**Status:** direction (owner-approved) · **supersedes** the hosted multi-tenant plan in
-`docs/multi-user-sync.md`, which is now parked as an optional future *hosted adapter*.
+**Status:** direction (owner-approved; revalidated after merging `main` on 2026-07-31) ·
+**supersedes** the hosted multi-tenant plan in `docs/multi-user-sync.md`, which is now
+parked as an optional future *hosted adapter*.
 
 ---
 
 ## Thesis
 
 > **A private AI coach for endurance athletes.** Your complete training history — losslessly
-> yours, in a local database — analyzed by the model *you* choose (fully local, or your own
-> cloud key). The **anti-Strava**: no feed, no kudos, no engagement mechanics; just quiet,
-> deep insight that *remembers* your training over time.
+> yours, in a local vault on your device — analyzed by the model *you* choose (fully local,
+> or your own cloud key). The **anti-Strava**: no feed, no kudos, no engagement mechanics;
+> just quiet, deep insight that *remembers* your training over time.
 
 ## Who it's for (ICP)
 
@@ -46,21 +47,27 @@ The trilemma position is **configuration**, not a fork in the codebase.
 flowchart TB
     subgraph Core["FitSift local-first core (on device)"]
         UI["App UI — desktop / PWA"]
-        DOM["Domain — library · memory · analysis · poller"]
-        LDB[("Local database — SQLite")]
+        SUP["Packaged local supervisor<br/>web · poller · analyzer"]
+        DOM["Domain — library · memory · chats · profile · analysis"]
+        LDB[("SQLite control plane<br/>profile · chats · settings · sync journal")]
+        FILES[("Portable local archive<br/>raw FIT · lossless JSON · analysis Markdown")]
         UI --> DOM
+        SUP --> DOM
         DOM --> LDB
+        DOM --> FILES
     end
 
     subgraph Inference["Inference adapter (pluggable)"]
         I1["Local model<br/>Ollama / LM Studio"]
         I2["BYO cloud key<br/>OpenAI-compatible"]
         I3["Hosted model<br/>(future · corner C)"]
+        KEYS["OS keychain<br/>provider secrets · never synced"]
+        I2 -.-> KEYS
     end
 
     subgraph Storage["Storage / sync adapter (pluggable)"]
         S1["On-device only"]
-        S2["E2EE sync relay<br/>(paid · zero-knowledge)"]
+        S2["E2EE sync relay<br/>encrypted records + objects<br/>(paid · zero-knowledge)"]
         S3["Hosted cloud<br/>(future · ObjectStore / Blob)"]
     end
 
@@ -71,6 +78,44 @@ flowchart TB
 - **Inference adapter:** local model ↔ BYO cloud key ↔ *(later)* hosted model.
 - **Storage / sync adapter:** on-device ↔ E2EE sync relay (paid) ↔ *(later)* hosted cloud.
 - Corner mapping: **A** = (S1/S2 + I2) · **B** = (S1/S2 + I1) · **C** = (S3 + I3).
+
+## What the latest `main` already gives us
+
+The local-first direction is now closer to the code than when this document was written:
+
+- `scripts/fitsift local` supervises the **web UI, Garmin poller, and auto-analyzer** as
+  local host processes, preserving access to the Copilot CLI and localhost model servers.
+- `analyze --watch` incrementally analyzes new workouts and de-duplicates against the memory
+  index — the on-device automation loop already exists.
+- The product now persists **chat sessions** (`~/.fit2json/chats/*.json`) and an **athlete
+  profile** (`~/.fit2json/profile.json`) in addition to workouts and analysis memory.
+- Analyze is chat-first and resumable, with backend/model selection and an optional visual
+  infographic pass.
+
+`ARCHITECTURE.md` documents this current three-role filesystem pipeline. The next step is to
+**package and consolidate it**, not replace its working behavior.
+
+## Design adjustments after the merge
+
+1. **Use a hybrid local vault, not one monolithic SQLite file.** SQLite should own mutable,
+   transactional state (profile, chats/messages, provider references, settings, sync journal).
+   Keep raw `.fit`, lossless workout JSON, and human-readable analysis Markdown as portable
+   files. This preserves the product's lossless/exportable promise and avoids syncing a live
+   SQLite database file between devices.
+2. **Package the existing three-role pipeline.** The poller/analyzer/web separation is proven;
+   an installable app should hide the supervisor/PID/process details behind one lifecycle and
+   one status surface rather than rewrite them into one process immediately.
+3. **Sync the whole vault, not only workouts.** E2EE sync must cover archive objects plus
+   profile, chats, memories, and non-secret preferences. Provider credentials stay in each
+   device's OS keychain and are never synced.
+4. **BYO cloud inference is not productized yet.** The CLI supports `--base-url` + `--api-key`,
+   but the web API/UI exposes only Copilot, Ollama, and LM Studio. Corner A needs a provider
+   settings UX, endpoint validation, and local secret storage.
+5. **Background analysis must be explicit and cost-aware.** `analyze --watch` can spend a
+   user's cloud-model budget automatically. Default it off until a provider is configured;
+   show the selected provider/model and let the user set limits or choose manual-only mode.
+6. **Copilot CLI remains a local owner/developer adapter.** `fitsift local` now proves that
+   integration end-to-end, but it is not the mainstream onboarding path.
 
 ## Positioning guardrails
 
@@ -90,13 +135,16 @@ flowchart TB
 
 ## Phased sequence
 
-1. **Local-first core (A + B).** Installable app (desktop / PWA), local DB, inference toggle
-   (local / BYO key), on-device poller. Honest and close to shippable — it *productizes* today's
-   CLI + local `serve` + local files rather than rebuilding them.
-2. **E2EE sync (paid).** Zero-knowledge relay; key management + recovery (data-loss UX is the
-   real risk here); multi-device.
-3. **Coach / sharing.** Multi-athlete via E2EE sharing.
-4. **Optional hosted adapter (corner C).** Only if mainstream demand proves out; reuses the
+1. **Package the local-first vault and runtime.** Turn today's `fitsift local` pipeline into an
+   installable desktop/PWA experience. Add SQLite for mutable control-plane state while
+   retaining the portable workout/memory archive; migrate profile + chats behind repositories.
+2. **Finish corners A + B.** Add a first-class inference adapter/config UI for local models and
+   arbitrary OpenAI-compatible BYO providers. Store secrets in the OS keychain, label privacy
+   boundaries, and make auto-analysis opt-in/cost-aware.
+3. **E2EE sync (paid).** Sync encrypted records + immutable archive objects through a
+   zero-knowledge relay; add key management + recovery (data-loss UX is the real risk here).
+4. **Coach / sharing.** Multi-athlete via E2EE sharing.
+5. **Optional hosted adapter (corner C).** Only if mainstream demand proves out; reuse the
    `ObjectStore` seam from the parked plan — additive, not a rewrite.
 
 ## Non-goals
@@ -108,5 +156,7 @@ flowchart TB
 ## Related docs
 
 - `PRODUCT.md` — brand & positioning (updated for local-first + broader audience).
+- `ARCHITECTURE.md` — current implementation: local web/poller/analyzer roles coordinated
+  through `~/.fit2json`.
 - `docs/multi-user-sync.md` — **parked**; now the blueprint for the optional hosted adapter
   (corner C).

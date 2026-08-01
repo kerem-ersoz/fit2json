@@ -130,6 +130,8 @@ can be prepended later for multi-tenancy):
 ├── library/   one lossless workout JSON per activity   (source of truth for the UI)
 ├── memory/    <sport>/<id>_<hash>.md analyses + index.jsonl (rebuildable cache)
 ├── fit/       raw .fit archive (incremental dedup)
+├── chats/     one durable JSON document per conversation
+├── profile/   athlete profile + non-secret preferences
 └── tokens/    Garmin/garth session cache (rehydrated by the cron Job)
 ```
 
@@ -217,6 +219,8 @@ flowchart TB
         LIB["Library index<br/>list + etag/size signature + TTL"]
         STOREW["store_activities<br/>conditional create (If-None-Match:*)"]
         MEM["MemoryStore<br/>per-entry .md + index.jsonl"]
+        CHAT["ChatStore<br/>one JSON document per conversation"]
+        PROF["Profile store<br/>athlete data + non-secret preferences"]
         MAT["Copilot materializer<br/>download blobs → temp"]
         TOK["Garmin token cache<br/>rehydrate / persist"]
     end
@@ -229,11 +233,15 @@ flowchart TB
         L["library/*.json"]
         M["memory/&lt;sport&gt;/*.md + index.jsonl"]
         F["fit/*.fit"]
+        C["chats/*.json"]
+        P["profile/profile.json"]
         T["tokens/*"]
     end
     LIB --> IFACE
     STOREW --> IFACE
     MEM --> IFACE
+    CHAT --> IFACE
+    PROF --> IFACE
     MAT --> IFACE
     TOK --> IFACE
     IFACE --> LOCAL
@@ -241,6 +249,8 @@ flowchart TB
     AZ --> L
     AZ --> M
     AZ --> F
+    AZ --> C
+    AZ --> P
     AZ --> T
 ```
 
@@ -327,8 +337,9 @@ flowchart TB
    short TTL; reads activities via the store.
 6. **`services-write`** — `store_activities` writes via conditional create (race-safe dedup);
    `fetch_and_store` unchanged logic but store-backed.
-7. **`memory-store`** — `MemoryStore` uses the store; per-entry `.md` unique keys; index as
-   rebuildable cache / Append Blob; update `_all_memory_entries`, `_entry_body`, `read_entry`.
+7. **`app-state-store`** — `MemoryStore`, `ChatStore`, and athlete-profile persistence use the
+   store. Keep memory entries and chat documents as immutable/versioned objects where possible;
+   make indexes rebuildable caches rather than concurrency-sensitive sources of truth.
 8. **`output-write`** — Web write path calls the store directly; keep `output.py` filesystem
    behavior for the CLI (`convert`/`fetch` to `-o`).
 
@@ -374,6 +385,9 @@ flowchart TB
   or an external endpoint) via `--base-url` / config.
 - **`index.jsonl` append isn't concurrency-safe.** Prefer immutable per-entry `.md` blobs +
   a rebuildable index (or Append Blob) to avoid corruption across the job + web writers.
+- **The hosted adapter now has more user state.** Latest `main` added durable chats and an
+  athlete profile. Any future tenant boundary and E2EE/export story must include those alongside
+  workouts and memory; model-provider credentials remain secrets and must not live in Blob.
 - **TTL vs. freshness.** Client polling drives periodic refetch, so a ~10–15s index-list TTL
   balances Blob list latency/cost against cross-replica convergence.
 - **No auth is added now.** Multi-tenancy (identity + per-user prefixes/credentials + a poller
