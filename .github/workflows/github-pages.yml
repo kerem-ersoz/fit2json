@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  VITE_API_BASE_URL: https://kerems-macbook-air-m4.tail569c59.ts.net/api
+  VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
   VITE_BASE_PATH: /fitsift/
 
 jobs:
@@ -32,6 +32,15 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
+      - name: Validate API endpoint
+        run: |
+          node - <<'NODE'
+          const url = new URL(process.env.VITE_API_BASE_URL)
+          if (url.protocol !== 'https:' || !url.pathname.replace(/\/+$/, '').endsWith('/api')) {
+            throw new Error('VITE_API_BASE_URL must be an HTTPS URL ending in /api')
+          }
+          NODE
 
       - name: Build frontend
         working-directory: frontend
