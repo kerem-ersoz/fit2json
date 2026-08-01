@@ -2,7 +2,7 @@ import { NavLink, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { clsx } from 'clsx'
 import { Brain, ListChecks, MessageSquare, Upload, User, type LucideIcon } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode, type RefObject } from 'react'
 import { api } from '../lib/api'
 import { useUnits } from '../lib/units'
 import { ErrorBoundary } from './ErrorBoundary'
@@ -106,11 +106,49 @@ function ChatHeaderButton() {
   )
 }
 
+/** Keep the fixed Analyze shell aligned with iOS's visible viewport while the keyboard pans it. */
+function useVisualViewportFrame(containerRef: RefObject<HTMLDivElement>, enabled: boolean) {
+  useEffect(() => {
+    const container = containerRef.current
+    const viewport = window.visualViewport
+    if (!enabled || !container || !viewport || !window.matchMedia('(pointer: coarse)').matches) {
+      return
+    }
+
+    let animationFrame: number | null = null
+    const syncFrame = () => {
+      if (animationFrame !== null) cancelAnimationFrame(animationFrame)
+      animationFrame = requestAnimationFrame(() => {
+        animationFrame = null
+        if (viewport.height < 100) return
+        container.style.top = `${viewport.offsetTop}px`
+        container.style.height = `${viewport.height}px`
+      })
+    }
+
+    syncFrame()
+    viewport.addEventListener('resize', syncFrame)
+    viewport.addEventListener('scroll', syncFrame)
+
+    return () => {
+      if (animationFrame !== null) cancelAnimationFrame(animationFrame)
+      viewport.removeEventListener('resize', syncFrame)
+      viewport.removeEventListener('scroll', syncFrame)
+      container.style.top = ''
+      container.style.height = ''
+    }
+  }, [containerRef, enabled])
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation()
   const isAnalyze = location.pathname === '/analyze' || location.pathname === '/analyze/'
+  const shellRef = useRef<HTMLDivElement>(null)
+  useVisualViewportFrame(shellRef, isAnalyze)
+
   return (
     <div
+      ref={shellRef}
       className={clsx(
         isAnalyze
           ? 'fixed inset-x-0 top-0 flex h-dvh flex-col overflow-hidden overscroll-none lg:flex-row'
