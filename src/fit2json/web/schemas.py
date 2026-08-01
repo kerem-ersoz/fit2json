@@ -31,6 +31,7 @@ class Config(BaseModel):
     backends: Backends
     library_dir: str
     memory_dir: str
+    chats_dir: str
     base_path: str
     workout_prompt_default: str
 
@@ -101,3 +102,54 @@ class AthleteProfile(BaseModel):
     ftp_w: Optional[int] = Field(default=None, gt=0, le=2000)
     vo2max: Optional[float] = Field(default=None, gt=0, le=120)
     goals: Optional[str] = None
+
+
+class ChatMessage(BaseModel):
+    """One durable turn in a persisted conversation."""
+
+    id: str
+    role: str  # "user" | "assistant"
+    content: str
+    created_at: Optional[str] = None
+
+
+class ChatSave(BaseModel):
+    """Upsert payload for a chat session (PUT /chats/{id})."""
+
+    title: Optional[str] = None
+    backend: Optional[str] = None
+    model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
+    activity_ids: List[str] = Field(default_factory=list)
+    messages: List[ChatMessage] = Field(default_factory=list)
+
+
+class Chat(BaseModel):
+    """A full persisted chat session, including its messages."""
+
+    id: str
+    title: str
+    created_at: str
+    updated_at: str
+    backend: str = ""
+    model: str = ""
+    reasoning_effort: str = ""
+    activity_ids: List[str] = Field(default_factory=list)
+    messages: List[ChatMessage] = Field(default_factory=list)
+
+
+class ChatSummary(BaseModel):
+    """Lightweight list item for the chat history (no message bodies)."""
+
+    id: str
+    title: str
+    created_at: str
+    updated_at: str
+    message_count: int
+    backend: str = ""
+    model: str = ""
+    activity_ids: List[str] = Field(default_factory=list)
+
+
+class ChatList(BaseModel):
+    chats: List[ChatSummary]

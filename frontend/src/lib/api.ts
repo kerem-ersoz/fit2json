@@ -24,6 +24,7 @@ export interface AppConfig {
   backends: { copilot: boolean; default: string }
   library_dir: string
   memory_dir: string
+  chats_dir: string
   base_path: string
   workout_prompt_default: string
 }
@@ -137,6 +138,45 @@ export interface AthleteProfile {
   goals?: string | null
 }
 
+export interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  created_at?: string
+}
+
+export interface ChatSummary {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+  message_count: number
+  backend: string
+  model: string
+  activity_ids: string[]
+}
+
+export interface Chat {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+  backend: string
+  model: string
+  reasoning_effort: string
+  activity_ids: string[]
+  messages: ChatMessage[]
+}
+
+export interface ChatSaveBody {
+  title?: string
+  backend?: string
+  model?: string
+  reasoning_effort?: string
+  activity_ids: string[]
+  messages: ChatMessage[]
+}
+
 export const api = {
   config: () => getJSON<AppConfig>('/config'),
   models: (backend: string) => getJSON<ModelInfo>(`/models?backend=${encodeURIComponent(backend)}`),
@@ -189,6 +229,25 @@ export const api = {
     })
     if (!res.ok) throw new Error(await errorText(res))
     return (await res.json()) as AthleteProfile
+  },
+
+  chats: () => getJSON<{ chats: ChatSummary[] }>('/chats'),
+
+  chat: (id: string) => getJSON<Chat>(`/chats/${encodeURIComponent(id)}`),
+
+  saveChat: async (id: string, body: ChatSaveBody): Promise<Chat> => {
+    const res = await fetch(`${API_BASE}/chats/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) throw new Error(await errorText(res))
+    return (await res.json()) as Chat
+  },
+
+  deleteChat: async (id: string): Promise<void> => {
+    const res = await fetch(`${API_BASE}/chats/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    if (!res.ok) throw new Error(await errorText(res))
   },
 }
 
@@ -256,7 +315,7 @@ async function startSse(
   path: string,
   body: unknown,
   signal?: AbortSignal,
-): Promise<Response | string> {
+): Promise<Response | string | null> {
   let res: Response
   try {
     res = await fetch(`${API_BASE}${path}`, {
@@ -266,6 +325,8 @@ async function startSse(
       signal,
     })
   } catch (e) {
+    // An intentional abort (Stop, navigation, unmount) is not an error — stop silently.
+    if ((e as Error)?.name === 'AbortError' || signal?.aborted) return null
     return (e as Error)?.message ?? 'Request failed'
   }
   if (!res.ok || !res.body) {
@@ -281,23 +342,29 @@ async function startSse(
   return res
 }
 
-/** Read an SSE Response body, dispatching each parsed frame. */
+/** Read an SSE Response body, dispatching each parsed frame. Stops silently when the
+ *  request is aborted via its AbortController; other stream errors propagate. */
 async function pumpSse(res: Response, onFrame: (frame: SseFrame) => void): Promise<void> {
   const reader = res.body!.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
 
-  while (true) {
-    const { value, done } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    let sep: number
-    while ((sep = buffer.indexOf('\n\n')) !== -1) {
-      const frame = buffer.slice(0, sep)
-      buffer = buffer.slice(sep + 2)
-      const parsed = parseFrame(frame)
-      if (parsed) onFrame(parsed)
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let sep: number
+      while ((sep = buffer.indexOf('\n\n')) !== -1) {
+        const frame = buffer.slice(0, sep)
+        buffer = buffer.slice(sep + 2)
+        const parsed = parseFrame(frame)
+        if (parsed) onFrame(parsed)
+      }
     }
+  } catch (e) {
+    if ((e as Error)?.name === 'AbortError') return // cancelled via AbortController — expected
+    throw e
   }
 }
 
@@ -308,6 +375,7 @@ export async function streamAnalyze(
   signal?: AbortSignal,
 ): Promise<void> {
   const started = await startSse('/analyze', body, signal)
+  if (started === null) return // aborted — stop silently
   if (typeof started === 'string') {
     handlers.onError?.(started)
     return
@@ -348,6 +416,7 @@ export async function streamInfographic(
   signal?: AbortSignal,
 ): Promise<void> {
   const started = await startSse('/infographic', body, signal)
+  if (started === null) return // aborted — stop silently
   if (typeof started === 'string') {
     handlers.onError?.(started)
     return
@@ -404,6 +473,7 @@ export async function streamMemoryInfographic(
     body,
     signal,
   )
+  if (started === null) return // aborted — stop silently
   if (typeof started === 'string') {
     handlers.onError?.(started)
     return

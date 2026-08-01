@@ -23,6 +23,7 @@ services:
       # Point the web app at the mounted library / memory / profile.
       FITSIFT_LIBRARY: /data/library/json
       FITSIFT_MEMORY: /data/memory
+      FITSIFT_CHATS: /data/chats
       FITSIFT_PROFILE: /data/profile.json
       FITSIFT_CORS_ORIGINS: "*"
     healthcheck:

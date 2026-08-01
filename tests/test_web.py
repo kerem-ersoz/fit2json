@@ -21,6 +21,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("FITSIFT_LIBRARY", str(library))
     monkeypatch.setenv("FITSIFT_MEMORY", str(tmp_path / "memory"))
     monkeypatch.setenv("FITSIFT_PROFILE", str(tmp_path / "profile.json"))
+    monkeypatch.setenv("FITSIFT_CHATS", str(tmp_path / "chats"))
 
     # Rebuild the app + service caches against the patched environment.
     from fit2json.web import app as app_module
@@ -43,6 +44,7 @@ def test_config(client):
     body = r.json()
     assert body["brand"]["name"] == "FitSift"
     assert "copilot" in body["backends"]
+    assert body["chats_dir"].endswith("chats")
 
 
 def test_models_copilot(client):
@@ -202,6 +204,87 @@ def test_analyze_requires_prompt(client):
     # Missing prompt fails validation; a blank prompt is rejected by the route.
     assert client.post("/api/analyze", json={"activity_ids": ["x"]}).status_code == 422
     assert client.post("/api/analyze", json={"prompt": "   "}).status_code == 422
+
+
+def test_chats_empty_then_upsert_and_resume(client):
+    # A fresh corpus has no saved chats.
+    assert client.get("/api/chats").json() == {"chats": []}
+
+    # PUT upserts (create-on-first-save): the client owns the id.
+    body = {
+        "backend": "copilot",
+        "model": "auto",
+        "activity_ids": ["a1", "a2"],
+        "messages": [
+            {"id": "m1", "role": "user", "content": "How did my week go?"},
+            {"id": "m2", "role": "assistant", "content": "Strong and consistent."},
+        ],
+    }
+    r = client.put("/api/chats/chat-123", json=body)
+    assert r.status_code == 200
+    saved = r.json()
+    assert saved["id"] == "chat-123"
+    assert saved["title"] == "How did my week go?"  # derived from first user message
+    assert saved["created_at"] and saved["updated_at"]
+    assert [m["content"] for m in saved["messages"]] == ["How did my week go?", "Strong and consistent."]
+
+    # It now shows in the history summary (no message bodies, but a count).
+    listed = client.get("/api/chats").json()["chats"]
+    assert len(listed) == 1
+    assert listed[0]["id"] == "chat-123"
+    assert listed[0]["message_count"] == 2
+    assert listed[0]["activity_ids"] == ["a1", "a2"]
+    assert "messages" not in listed[0]
+
+    # And can be resumed in full.
+    full = client.get("/api/chats/chat-123").json()
+    assert len(full["messages"]) == 2
+    assert full["activity_ids"] == ["a1", "a2"]
+
+
+def test_chats_update_preserves_created_at_and_delete(client):
+    first = client.put(
+        "/api/chats/c1",
+        json={"messages": [{"id": "m1", "role": "user", "content": "Hi"}]},
+    ).json()
+
+    # A second save keeps created_at but advances the transcript.
+    second = client.put(
+        "/api/chats/c1",
+        json={
+            "title": "My renamed chat",
+            "messages": [
+                {"id": "m1", "role": "user", "content": "Hi"},
+                {"id": "m2", "role": "assistant", "content": "Hello!"},
+            ],
+        },
+    ).json()
+    assert second["created_at"] == first["created_at"]
+    assert second["title"] == "My renamed chat"
+    assert len(second["messages"]) == 2
+
+    assert client.delete("/api/chats/c1").status_code == 200
+    assert client.get("/api/chats/c1").status_code == 404
+    assert client.delete("/api/chats/c1").status_code == 404
+
+
+def test_chats_missing_returns_404(client):
+    assert client.get("/api/chats/nope").status_code == 404
+
+
+def test_chat_id_is_path_safe(client, tmp_path):
+    # An id with unsafe characters is sanitized to a single plain filename inside the
+    # chats dir — no subdirectories, nothing escaping the directory.
+    r = client.put(
+        "/api/chats/chat@2024!weird",
+        json={"messages": [{"id": "m1", "role": "user", "content": "hey"}]},
+    )
+    assert r.status_code == 200
+    assert r.json()["id"] == "chat-2024-weird"
+
+    chats_dir = tmp_path / "chats"
+    entries = list(chats_dir.iterdir())
+    assert entries == [chats_dir / "chat-2024-weird.json"]  # one flat file, no nesting
 
 
 def test_analyze_freeform_no_selection(client, monkeypatch):
@@ -718,6 +801,7 @@ def empty_client(tmp_path, monkeypatch):
     monkeypatch.setenv("FITSIFT_LIBRARY", str(library))
     monkeypatch.setenv("FITSIFT_MEMORY", str(tmp_path / "memory"))
     monkeypatch.setenv("FITSIFT_PROFILE", str(tmp_path / "profile.json"))
+    monkeypatch.setenv("FITSIFT_CHATS", str(tmp_path / "chats"))
 
     from fit2json.web import app as app_module
     from fit2json.web import services

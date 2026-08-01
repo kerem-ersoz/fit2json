@@ -137,6 +137,7 @@ read/written directly by the host processes):
 │   └── json/           # one lossless JSON per activity       ← poller -o / UI library
 ├── memory/             # analysis corpus (per-sport .md)      ← analyzer / UI Memory tab
 │   └── index.jsonl     # one line per analysis (dedup + recall key)
+├── chats/              # saved chat sessions (one .json each)  ← UI chat pane (resume later)
 ├── garmintokens/       # cached Garmin session (GARMINTOKENS) ← poller
 ├── profile.json        # athlete "You" profile                ← UI / analyzer personalization
 ├── logs/analyzer.log   # host analyzer output                 ← scripts/fitsift
@@ -144,7 +145,8 @@ read/written directly by the host processes):
 ```
 
 Container env maps the web app onto these paths: `FITSIFT_LIBRARY=/data/library/json`,
-`FITSIFT_MEMORY=/data/memory`, `FITSIFT_PROFILE=/data/profile.json`.
+`FITSIFT_MEMORY=/data/memory`, `FITSIFT_PROFILE=/data/profile.json`,
+`FITSIFT_CHATS=/data/chats`.
 
 ---
 

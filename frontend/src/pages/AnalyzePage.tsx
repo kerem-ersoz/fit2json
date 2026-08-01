@@ -1,16 +1,17 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Sparkles } from 'lucide-react'
+import { MessageSquare, Sparkles } from 'lucide-react'
 import { api } from '../lib/api'
 import { sportMeta } from '../lib/sport'
 import { sortActivities } from '../lib/library'
 import { hrMaxProxy } from '../lib/intensity'
 import { useWorkoutParams } from '../lib/useWorkoutParams'
 import { useCardKeyboardNav } from '../lib/useCardKeyboardNav'
+import { useChat } from '../features/chat/ChatProvider'
 import { WorkoutBrowser } from '../features/analyze/WorkoutBrowser'
-import { ConversationPane } from '../features/analyze/ConversationPane'
 import { ActivityGridSkeleton } from '../features/activities/ActivityGridSkeleton'
 import { EmptyState, ErrorState } from '../components/ui/Feedback'
+import { Button } from '../components/ui/Button'
 
 export function AnalyzePage() {
   const { data, isLoading, isError, error, refetch } = useQuery({
@@ -19,10 +20,14 @@ export function AnalyzePage() {
   })
 
   const { search, sport, sort, setParam } = useWorkoutParams()
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  // Selection lives in the chat: whatever is selected here is attached to the active
+  // conversation, so the chat pane (and any resumed chat) stays in sync.
+  const { activityIds, setActivityIds, toggleActivity, setOpen } = useChat()
   const searchRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLUListElement>(null)
   useCardKeyboardNav(listRef, searchRef)
+
+  const selected = useMemo(() => new Set(activityIds), [activityIds])
 
   const sports = useMemo(() => {
     const set = new Set<string>()
@@ -44,38 +49,43 @@ export function AnalyzePage() {
     return sortActivities(base, sort)
   }, [data, sport, search, sort])
 
-  // Selection persists across filter changes; the conversation sees every selected workout.
-  const selectedActivities = useMemo(
-    () => (data ?? []).filter((a) => selected.has(a.id)),
+  // Count only selections that still exist in the library (a resumed chat may reference
+  // workouts that are no longer present).
+  const selectedCount = useMemo(
+    () => (data ?? []).filter((a) => selected.has(a.id)).length,
     [data, selected],
   )
 
   const hrMax = useMemo(() => hrMaxProxy(data ?? []), [data])
 
-  const toggle = (id: string) =>
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-
   const toggleAll = () => {
     const ids = filtered.map((a) => a.id)
-    const allSelected = ids.length > 0 && ids.every((id) => selected.has(id))
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (allSelected) ids.forEach((id) => next.delete(id))
-      else ids.forEach((id) => next.add(id))
-      return next
-    })
+    const next = new Set(activityIds)
+    const allSelected = ids.length > 0 && ids.every((id) => next.has(id))
+    if (allSelected) ids.forEach((id) => next.delete(id))
+    else ids.forEach((id) => next.add(id))
+    setActivityIds([...next])
   }
 
   return (
     <div>
-      <div className="mb-4 sm:mb-6">
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">Analyze</h1>
-        <p className="text-sm text-slate-500">Select workouts, then chat with the model about them.</p>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3 sm:mb-6">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Analyze</h1>
+          <p className="text-sm text-slate-500">
+            Select workouts, then chat about them. Conversations are saved and resumable.
+          </p>
+        </div>
+        <Button
+          variant={selectedCount > 0 ? 'primary' : 'secondary'}
+          onClick={() => setOpen(true)}
+          aria-haspopup="dialog"
+        >
+          <MessageSquare className="h-4 w-4" />
+          {selectedCount > 0
+            ? `Chat about ${selectedCount} ${selectedCount === 1 ? 'workout' : 'workouts'}`
+            : 'Open chat'}
+        </Button>
       </div>
 
       {isLoading && <ActivityGridSkeleton />}
@@ -97,29 +107,24 @@ export function AnalyzePage() {
       )}
 
       {data && !isLoading && data.length > 0 && (
-        <div className="lg:grid lg:grid-cols-[1fr_minmax(360px,26rem)] lg:items-start lg:gap-6">
-          <WorkoutBrowser
-            activities={filtered}
-            selectedIds={selected}
-            onToggle={toggle}
-            onToggleAll={toggleAll}
-            listRef={listRef}
-            hrMax={hrMax}
-            controls={{
-              search,
-              onSearch: (v) => setParam('q', v, ''),
-              sport,
-              sports,
-              onSport: (v) => setParam('sport', v, 'all'),
-              sort,
-              onSort: (v) => setParam('sort', v, 'date'),
-              searchRef,
-            }}
-          />
-          <div className="mt-6 lg:mt-0 lg:sticky lg:top-8">
-            <ConversationPane activities={selectedActivities} onDeselect={toggle} />
-          </div>
-        </div>
+        <WorkoutBrowser
+          activities={filtered}
+          selectedIds={selected}
+          onToggle={toggleActivity}
+          onToggleAll={toggleAll}
+          listRef={listRef}
+          hrMax={hrMax}
+          controls={{
+            search,
+            onSearch: (v) => setParam('q', v, ''),
+            sport,
+            sports,
+            onSport: (v) => setParam('sport', v, 'all'),
+            sort,
+            onSort: (v) => setParam('sort', v, 'date'),
+            searchRef,
+          }}
+        />
       )}
     </div>
   )

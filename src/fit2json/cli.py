@@ -588,10 +588,12 @@ def memory_show(entry_id, memory_dir):
               help="Workout-JSON library dir (default ~/.fit2json/library/json).")
 @click.option("--memory", "memory_dir", default=None,
               help="Training-memory corpus dir (default ./fit2json-memory).")
+@click.option("--chats", "chats_dir", default=None,
+              help="Persisted chat-session dir (default ~/.fit2json/chats).")
 @click.option("--frontend", "frontend_dist", default=None,
               help="Path to the built SPA (frontend/dist). Auto-detected from source checkout.")
 @click.option("--dev", is_flag=True, help="Enable autoreload for development.")
-def serve(host, port, library_dir, memory_dir, frontend_dist, dev):
+def serve(host, port, library_dir, memory_dir, chats_dir, frontend_dist, dev):
     """Serve the FitSift web UI + JSON API locally."""
     import os
 
@@ -606,6 +608,8 @@ def serve(host, port, library_dir, memory_dir, frontend_dist, dev):
         os.environ["FITSIFT_LIBRARY"] = library_dir
     if memory_dir:
         os.environ["FITSIFT_MEMORY"] = memory_dir
+    if chats_dir:
+        os.environ["FITSIFT_CHATS"] = chats_dir
     if frontend_dist:
         os.environ["FITSIFT_FRONTEND_DIST"] = frontend_dist
     else:
