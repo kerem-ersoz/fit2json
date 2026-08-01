@@ -23,6 +23,15 @@ npm run dev
 
 Open http://localhost:5173.
 
+To point a build at an API on another HTTPS origin, set the complete API base URL:
+
+```bash
+VITE_API_BASE_URL=https://computer.example.ts.net/api npm run build
+```
+
+`VITE_API_BASE_URL` is embedded in the public JavaScript bundle. It must contain only a
+URL, never a token or other secret.
+
 ### Test it on your phone
 
 Both servers already bind all interfaces. Start the backend with `--host 0.0.0.0`,
@@ -44,6 +53,75 @@ Build with a base path and set the backend base path to match:
 VITE_BASE_PATH=/fitsift/ npm run build
 FITSIFT_BASE_PATH=/fitsift fit2json serve
 ```
+
+## GitHub Pages frontend + private phone access
+
+The production SPA is served from `https://www.ker.ooo/fitsift/` while the API, workout
+files, and analysis tools remain on this computer. The phone must be signed into the same
+Tailscale network.
+
+### 1. Connect the local API to the tailnet
+
+Install the Tailscale macOS app, sign in, and approve its VPN configuration. Start the
+host-mode web service so FastAPI remains bound to loopback, then configure a persistent
+private HTTPS proxy:
+
+```bash
+./scripts/fitsift web up
+TAILSCALE=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+"$TAILSCALE" serve --bg 8000
+"$TAILSCALE" serve status
+```
+
+The status output reports a URL such as `https://computer.example.ts.net`. Verify it from
+another device on the tailnet:
+
+```bash
+curl https://computer.example.ts.net/api/health
+```
+
+Use Tailscale **Serve**, not Funnel. Funnel would make the unauthenticated FastAPI service
+public. Install Tailscale on the phone and sign into the same tailnet.
+
+### 2. Build for the `/fitsift/` path
+
+The production build needs both the GitHub Pages base path and the private API endpoint:
+
+```bash
+VITE_BASE_PATH=/fitsift/ \
+VITE_API_BASE_URL=https://computer.example.ts.net/api \
+npm run build
+```
+
+The `kerem-ersoz/kerem-ersoz.github.io` repository owns production deployment. Its
+`Deploy site and FitSift to Pages` workflow checks out this repository, builds the SPA,
+assembles it under `/fitsift/`, and deploys one ephemeral Pages artifact. Built files are
+not committed to either repository.
+
+GitHub Pages has no server-side SPA rewrite. The Pages assembly includes a redirect
+limited to `/fitsift/*` so direct navigation and refreshes recover the React Router path
+without changing the homepage's general 404 behavior.
+
+### 3. Restrict the API origin
+
+Put the exact Pages origin in the repo-root `.env` used by the local backend:
+
+```dotenv
+FITSIFT_CORS_ORIGINS=https://www.ker.ooo
+```
+
+Restart the local web process after changing it:
+
+```bash
+./scripts/fitsift web down
+./scripts/fitsift web up
+```
+
+The static shell is public because GitHub Pages has no built-in private-site
+authentication. The API and personal data remain tailnet-only: devices outside the
+tailnet cannot resolve a working connection to the Tailscale Serve endpoint. The shell
+remains available when this computer is offline, but API-backed screens cannot load
+until the computer and Tailscale are online.
 
 ## Scripts
 

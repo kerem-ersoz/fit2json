@@ -16,7 +16,7 @@ services:
     container_name: fitsift-web
     command: ["serve", "--host", "0.0.0.0", "--port", "8000"]
     ports:
-      - "${FITSIFT_PORT:-8000}:8000"
+      - "${FITSIFT_BIND_HOST:-0.0.0.0}:${FITSIFT_PORT:-8000}:8000"
     volumes:
       - "${FIT2JSON_HOME:-${HOME}/.fit2json}:/data"
     environment:
@@ -25,7 +25,7 @@ services:
       FITSIFT_MEMORY: /data/memory
       FITSIFT_CHATS: /data/chats
       FITSIFT_PROFILE: /data/profile.json
-      FITSIFT_CORS_ORIGINS: "*"
+      FITSIFT_CORS_ORIGINS: "${FITSIFT_CORS_ORIGINS:-*}"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health').getcode()==200 else 1)"]
       interval: 30s

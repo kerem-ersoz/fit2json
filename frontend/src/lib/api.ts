@@ -1,8 +1,11 @@
 // Typed client for the FitSift JSON API.
-// API base derives from Vite's BASE_URL so it works at "/" locally and under a
-// path prefix (e.g. /fitsift) later, with no code change.
+// Remote builds can target a private tailnet URL; local and bundled builds retain
+// the same-origin /api default.
 
-const API_BASE = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`
+const configuredApiBase = import.meta.env.VITE_API_BASE_URL?.trim()
+const API_BASE = (
+  configuredApiBase || `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`
+).replace(/\/+$/, '')
 
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`)
