@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fit2json import __version__
 from fit2json.web import BRAND_NAME
 from fit2json.web.config import get_settings
-from fit2json.web.routes import activities, analyze, ingest, memory, meta, profile
+from fit2json.web.routes import activities, analyze, chats, ingest, memory, meta, profile
 
 
 def create_app() -> FastAPI:
@@ -40,6 +40,7 @@ def create_app() -> FastAPI:
     app.include_router(activities.router, prefix="/api")
     app.include_router(analyze.router, prefix="/api")
     app.include_router(memory.router, prefix="/api")
+    app.include_router(chats.router, prefix="/api")
     app.include_router(ingest.router, prefix="/api")
     app.include_router(profile.router, prefix="/api")
 

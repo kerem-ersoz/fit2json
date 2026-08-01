@@ -24,6 +24,7 @@ export interface AppConfig {
   backends: { copilot: boolean; default: string }
   library_dir: string
   memory_dir: string
+  chats_dir: string
   base_path: string
   workout_prompt_default: string
 }
@@ -137,6 +138,45 @@ export interface AthleteProfile {
   goals?: string | null
 }
 
+export interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  created_at?: string
+}
+
+export interface ChatSummary {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+  message_count: number
+  backend: string
+  model: string
+  activity_ids: string[]
+}
+
+export interface Chat {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+  backend: string
+  model: string
+  reasoning_effort: string
+  activity_ids: string[]
+  messages: ChatMessage[]
+}
+
+export interface ChatSaveBody {
+  title?: string
+  backend?: string
+  model?: string
+  reasoning_effort?: string
+  activity_ids: string[]
+  messages: ChatMessage[]
+}
+
 export const api = {
   config: () => getJSON<AppConfig>('/config'),
   models: (backend: string) => getJSON<ModelInfo>(`/models?backend=${encodeURIComponent(backend)}`),
@@ -189,6 +229,25 @@ export const api = {
     })
     if (!res.ok) throw new Error(await errorText(res))
     return (await res.json()) as AthleteProfile
+  },
+
+  chats: () => getJSON<{ chats: ChatSummary[] }>('/chats'),
+
+  chat: (id: string) => getJSON<Chat>(`/chats/${encodeURIComponent(id)}`),
+
+  saveChat: async (id: string, body: ChatSaveBody): Promise<Chat> => {
+    const res = await fetch(`${API_BASE}/chats/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) throw new Error(await errorText(res))
+    return (await res.json()) as Chat
+  },
+
+  deleteChat: async (id: string): Promise<void> => {
+    const res = await fetch(`${API_BASE}/chats/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    if (!res.ok) throw new Error(await errorText(res))
   },
 }
 
@@ -257,6 +316,8 @@ export async function streamAnalyze(
   handlers: StreamHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
+  const aborted = (e: unknown) => (e as Error)?.name === 'AbortError' || !!signal?.aborted
+
   let res: Response
   try {
     res = await fetch(`${API_BASE}/analyze`, {
@@ -266,6 +327,7 @@ export async function streamAnalyze(
       signal,
     })
   } catch (e) {
+    if (aborted(e)) return // intentional stop — not an error
     handlers.onError?.((e as Error)?.message ?? 'Request failed')
     return
   }
@@ -286,22 +348,27 @@ export async function streamAnalyze(
   const decoder = new TextDecoder()
   let buffer = ''
 
-  while (true) {
-    const { value, done } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    let sep: number
-    while ((sep = buffer.indexOf('\n\n')) !== -1) {
-      const frame = buffer.slice(0, sep)
-      buffer = buffer.slice(sep + 2)
-      const parsed = parseFrame(frame)
-      if (!parsed) continue
-      if (parsed.event === 'start') handlers.onStart?.(parsed.data.backend)
-      else if (parsed.event === 'step') handlers.onStep?.(parsed.data)
-      else if (parsed.event === 'reduce') handlers.onReduce?.(parsed.data)
-      else if (parsed.event === 'delta') handlers.onDelta(parsed.data.text ?? '')
-      else if (parsed.event === 'done') handlers.onDone?.(parsed.data)
-      else if (parsed.event === 'error') handlers.onError?.(parsed.data.message ?? 'Analysis failed')
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let sep: number
+      while ((sep = buffer.indexOf('\n\n')) !== -1) {
+        const frame = buffer.slice(0, sep)
+        buffer = buffer.slice(sep + 2)
+        const parsed = parseFrame(frame)
+        if (!parsed) continue
+        if (parsed.event === 'start') handlers.onStart?.(parsed.data.backend)
+        else if (parsed.event === 'step') handlers.onStep?.(parsed.data)
+        else if (parsed.event === 'reduce') handlers.onReduce?.(parsed.data)
+        else if (parsed.event === 'delta') handlers.onDelta(parsed.data.text ?? '')
+        else if (parsed.event === 'done') handlers.onDone?.(parsed.data)
+        else if (parsed.event === 'error') handlers.onError?.(parsed.data.message ?? 'Analysis failed')
+      }
     }
+  } catch (e) {
+    if (aborted(e)) return // stream cancelled via AbortController — expected
+    handlers.onError?.((e as Error)?.message ?? 'Stream interrupted')
   }
 }

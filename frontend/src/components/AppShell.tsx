@@ -1,10 +1,13 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { clsx } from 'clsx'
-import { Brain, History, ListChecks, Upload, User, type LucideIcon } from 'lucide-react'
+import { Brain, History, ListChecks, MessageSquare, Upload, User, type LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { api } from '../lib/api'
 import { useUnits } from '../lib/units'
+import { ErrorBoundary } from './ErrorBoundary'
+import { useChat } from '../features/chat/ChatProvider'
+import { ChatDock } from '../features/chat/ChatDock'
 
 interface NavItem {
   to: string
@@ -61,7 +64,51 @@ function UnitsToggle() {
   )
 }
 
+/** Sidebar entry that opens the global chat pane. Not a route — it toggles the drawer. */
+function ChatSidebarButton() {
+  const { toggleOpen, open, messages } = useChat()
+  return (
+    <button
+      type="button"
+      onClick={toggleOpen}
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      className={clsx(
+        'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
+        open ? 'bg-brand-50 text-brand-700' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
+      )}
+    >
+      <MessageSquare className="h-5 w-5" />
+      <span className="flex-1 text-left">Chat</span>
+      {messages.length > 0 && !open && (
+        <span className="h-1.5 w-1.5 rounded-full bg-brand-500" aria-hidden="true" />
+      )}
+    </button>
+  )
+}
+
+/** Compact chat toggle for the mobile top bar. */
+function ChatHeaderButton() {
+  const { toggleOpen, open, messages } = useChat()
+  return (
+    <button
+      type="button"
+      onClick={toggleOpen}
+      aria-label="Chat"
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      className="relative rounded-lg p-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+    >
+      <MessageSquare className="h-5 w-5" />
+      {messages.length > 0 && !open && (
+        <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-brand-500" aria-hidden="true" />
+      )}
+    </button>
+  )
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
+  const location = useLocation()
   return (
     <div className="min-h-full lg:flex">
       {/* Desktop sidebar */}
@@ -89,6 +136,9 @@ export function AppShell({ children }: { children: ReactNode }) {
             </NavLink>
           ))}
         </nav>
+        <div className="border-t border-slate-100 px-3 py-2">
+          <ChatSidebarButton />
+        </div>
         <div className="space-y-3 px-5 py-4">
           <UnitsToggle />
           <div className="text-xs text-slate-400">Local · single-user</div>
@@ -98,13 +148,16 @@ export function AppShell({ children }: { children: ReactNode }) {
       {/* Mobile top bar */}
       <header className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur lg:hidden">
         <BrandMark compact />
-        <UnitsToggle />
+        <div className="flex items-center gap-2">
+          <UnitsToggle />
+          <ChatHeaderButton />
+        </div>
       </header>
 
       {/* Main content */}
       <main className="min-w-0 flex-1">
         <div className="mx-auto max-w-5xl px-4 pb-24 pt-4 sm:px-6 lg:px-8 lg:pb-10 lg:pt-8">
-          {children}
+          <ErrorBoundary resetKey={location.pathname}>{children}</ErrorBoundary>
         </div>
       </main>
 
@@ -130,6 +183,10 @@ export function AppShell({ children }: { children: ReactNode }) {
           </NavLink>
         ))}
       </nav>
+
+      <ErrorBoundary compact label="The chat pane hit an error">
+        <ChatDock />
+      </ErrorBoundary>
     </div>
   )
 }

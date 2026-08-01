@@ -28,6 +28,7 @@ def config() -> Config:
         ),
         library_dir=str(settings.library_dir),
         memory_dir=str(settings.memory_dir),
+        chats_dir=str(settings.chats_dir),
         base_path=settings.base_path,
         workout_prompt_default=services.CANONICAL_WORKOUT_PROMPT,
     )

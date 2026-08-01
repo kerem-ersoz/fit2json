@@ -38,6 +38,7 @@ COPY --from=frontend /web/dist /opt/fitsift/frontend/dist
 ENV FITSIFT_FRONTEND_DIST=/opt/fitsift/frontend/dist \
     FITSIFT_LIBRARY=/data/library/json \
     FITSIFT_MEMORY=/data/memory \
+    FITSIFT_CHATS=/data/chats \
     FITSIFT_PROFILE=/data/profile.json
 
 WORKDIR /data
