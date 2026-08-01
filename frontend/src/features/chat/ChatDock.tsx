@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { clsx } from 'clsx'
 import {
@@ -283,12 +283,15 @@ function ChatView({
     return ['Compare my last 3 long runs', 'How did my running go this month?', 'Summarize this week of training']
   }, [attachedCount])
 
-  const submit = (text: string) => {
-    if (chat.running) return // don't clear/drop a follow-up typed mid-stream
-    if (!text.trim()) return
-    setInput('')
-    void chat.send(text)
-  }
+  const submit = useCallback(
+    (text: string) => {
+      if (chat.running) return // don't clear/drop a follow-up typed mid-stream
+      if (!text.trim()) return
+      setInput('')
+      void chat.send(text)
+    },
+    [chat.running, chat.send],
+  )
 
   const commitTitle = () => {
     setEditingTitle(false)
@@ -507,67 +510,16 @@ function ChatView({
         </div>
       )}
 
-      {/* Transcript */}
-      <div
-        aria-live="polite"
-        className={clsx(
-          'min-h-0 flex-1 overflow-y-auto',
-          isWorkspace ? 'px-4 py-6 sm:px-6 sm:py-8' : 'px-3 py-4',
-        )}
-      >
-        <div className={clsx('h-full', isWorkspace && 'mx-auto max-w-3xl')}>
-          {chat.messages.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-              <div
-                className={clsx(
-                  'flex items-center justify-center rounded-full bg-brand-50 text-brand-700',
-                  isWorkspace ? 'h-14 w-14' : 'h-12 w-12',
-                )}
-              >
-                <Sparkles className={isWorkspace ? 'h-6 w-6' : 'h-5 w-5'} />
-              </div>
-              <p className={clsx('font-semibold text-slate-900', isWorkspace ? 'text-base' : 'text-sm')}>
-                {attachedCount > 0
-                  ? attachedCount === 1
-                    ? 'What do you want to understand about this workout?'
-                    : `What do you want to understand about these ${attachedCount} workouts?`
-                  : 'What do you want to understand about your training?'}
-              </p>
-              <p className={clsx('text-sm text-slate-500', isWorkspace ? 'max-w-md' : 'max-w-xs')}>
-                {attachedCount > 0
-                  ? 'Ask in your own words. The answer streams here and the conversation stays available for later.'
-                  : isWorkspace
-                    ? 'Ask across your full training history, or attach specific workouts from the context panel for a focused comparison.'
-                    : 'Describe the workouts in your question, or attach specific sessions from Analyze.'}
-              </p>
-              <div className="mt-2 flex max-w-xl flex-wrap justify-center gap-2">
-                {suggestions.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => submit(s)}
-                    className="min-h-11 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 motion-reduce:transition-none"
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-5">
-              {chat.messages.map((m) => (
-                <MessageBubble key={m.id} msg={m} running={chat.running} />
-              ))}
-              {chat.error && (
-                <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                  {chat.error}
-                </div>
-              )}
-              <div ref={endRef} />
-            </div>
-          )}
-        </div>
-      </div>
+      <ChatTranscript
+        messages={chat.messages}
+        running={chat.running}
+        error={chat.error}
+        attachedCount={attachedCount}
+        suggestions={suggestions}
+        onSubmit={submit}
+        isWorkspace={isWorkspace}
+        endRef={endRef}
+      />
 
       {/* Composer */}
       {isWorkspace ? (
@@ -579,7 +531,7 @@ function ChatView({
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                     e.preventDefault()
                     submit(input)
                   }
@@ -594,7 +546,7 @@ function ChatView({
                 className="max-h-40 min-h-[4.5rem] w-full resize-y border-0 bg-transparent px-2 py-1.5 text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none"
               />
               <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-1 pt-2">
-                <span className="text-xs text-slate-500">⌘/Ctrl + Enter to send</span>
+                <span className="text-xs text-slate-500">Enter to send · Shift+Enter for a new line</span>
                 {chat.running ? (
                   <Button variant="secondary" onClick={() => chat.stop()}>
                     <Square className="h-4 w-4" />
@@ -623,7 +575,7 @@ function ChatView({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault()
                   submit(input)
                 }
@@ -631,7 +583,7 @@ function ChatView({
               rows={1}
               placeholder={
                 attachedCount > 0
-                  ? 'Ask a question…  (⌘/Ctrl+Enter)'
+                  ? 'Ask a question…'
                   : 'Ask anything — e.g. “compare my last 3 long runs”'
               }
               aria-label="Message"
@@ -685,6 +637,91 @@ function ChatView({
     </>
   )
 }
+
+interface ChatTranscriptProps {
+  messages: Msg[]
+  running: boolean
+  error: string | null
+  attachedCount: number
+  suggestions: string[]
+  onSubmit: (text: string) => void
+  isWorkspace: boolean
+  endRef: React.RefObject<HTMLDivElement>
+}
+
+const ChatTranscript = memo(function ChatTranscript({
+  messages,
+  running,
+  error,
+  attachedCount,
+  suggestions,
+  onSubmit,
+  isWorkspace,
+  endRef,
+}: ChatTranscriptProps) {
+  return (
+    <div
+      aria-live="polite"
+      className={clsx(
+        'min-h-0 flex-1 overflow-y-auto',
+        isWorkspace ? 'px-4 py-6 sm:px-6 sm:py-8' : 'px-3 py-4',
+      )}
+    >
+      <div className={clsx('h-full', isWorkspace && 'mx-auto max-w-3xl')}>
+        {messages.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+            <div
+              className={clsx(
+                'flex items-center justify-center rounded-full bg-brand-50 text-brand-700',
+                isWorkspace ? 'h-14 w-14' : 'h-12 w-12',
+              )}
+            >
+              <Sparkles className={isWorkspace ? 'h-6 w-6' : 'h-5 w-5'} />
+            </div>
+            <p className={clsx('font-semibold text-slate-900', isWorkspace ? 'text-base' : 'text-sm')}>
+              {attachedCount > 0
+                ? attachedCount === 1
+                  ? 'What do you want to understand about this workout?'
+                  : `What do you want to understand about these ${attachedCount} workouts?`
+                : 'What do you want to understand about your training?'}
+            </p>
+            <p className={clsx('text-sm text-slate-500', isWorkspace ? 'max-w-md' : 'max-w-xs')}>
+              {attachedCount > 0
+                ? 'Ask in your own words. The answer streams here and the conversation stays available for later.'
+                : isWorkspace
+                  ? 'Ask across your full training history, or attach specific workouts from the context panel for a focused comparison.'
+                  : 'Describe the workouts in your question, or attach specific sessions from Analyze.'}
+            </p>
+            <div className="mt-2 flex max-w-xl flex-wrap justify-center gap-2">
+              {suggestions.map((suggestion) => (
+                <button
+                  key={suggestion}
+                  type="button"
+                  onClick={() => onSubmit(suggestion)}
+                  className="min-h-11 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 motion-reduce:transition-none"
+                >
+                  {suggestion}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-5">
+            {messages.map((message) => (
+              <MessageBubble key={message.id} msg={message} running={running} />
+            ))}
+            {error && (
+              <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                {error}
+              </div>
+            )}
+            <div ref={endRef} />
+          </div>
+        )}
+      </div>
+    </div>
+  )
+})
 
 function HistoryView({ mode, onClose }: { mode: ChatSurfaceMode; onClose: () => void }) {
   const chat = useChat()
@@ -925,7 +962,7 @@ function StepList({ steps, running }: { steps: MapStep[]; running: boolean }) {
   )
 }
 
-function MessageBubble({
+const MessageBubble = memo(function MessageBubble({
   msg,
   running,
 }: {
@@ -951,4 +988,4 @@ function MessageBubble({
       ) : null}
     </div>
   )
-}
+})
