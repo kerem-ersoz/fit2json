@@ -518,11 +518,14 @@ The compose stack reads these (all optional) from the environment or a repo-root
 |-----|---------|---------|
 | `FIT2JSON_HOME` | `~/.fit2json` | Host data dir mounted at `/data`. |
 | `FITSIFT_PORT` | `8000` | Host port for the UI. |
+| `FITSIFT_BIND_HOST` | `0.0.0.0` | Docker host bind address; use `127.0.0.1` behind Tailscale Serve. |
+| `FITSIFT_CORS_ORIGINS` | `*` | Comma-separated browser origins; set the exact Azure origin remotely. |
 | `POLL_INTERVAL` | `900` | Seconds between Garmin polls (poller service). |
 | `WATCH_INTERVAL` | `3600` | Seconds between image-update checks (autoupdate). |
 
 Reach it from your phone on the same Wi-Fi at `http://<your-laptop-ip>:8000` (the server
-already binds all interfaces).
+already binds all interfaces). For an Azure-hosted frontend with private tailnet access
+to this local backend, follow [the frontend deployment guide](frontend/README.md#azure-frontend--private-phone-access).
 
 ### Keeping data fresh + the analysis caveat
 
