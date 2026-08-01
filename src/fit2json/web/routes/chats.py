@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException
 
 from fit2json.chats import ChatStore
 from fit2json.web.config import get_settings
-from fit2json.web.schemas import Chat, ChatList, ChatSave
+from fit2json.web.schemas import Chat, ChatList, ChatSave, ChatSummary
 
 router = APIRouter(prefix="/chats", tags=["chats"])
 
@@ -24,7 +24,7 @@ def _store() -> ChatStore:
 @router.get("", response_model=ChatList)
 def list_chats() -> ChatList:
     """All saved chats as lightweight summaries, most recently updated first."""
-    return ChatList(chats=_store().list())
+    return ChatList(chats=[ChatSummary(**chat) for chat in _store().list()])
 
 
 @router.get("/{chat_id}", response_model=Chat)
