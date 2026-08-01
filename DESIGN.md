@@ -193,8 +193,8 @@ tool does not need two voices.
 
 ### Hierarchy
 - **Display** (700, `1.5rem`/text-2xl, line-height ~1.15, `-0.025em`): page titles
-  ("Library"). The largest type in the app — this is a compact product UI, not a
-  marketing page; it never shouts.
+  when a surface needs one (for example, "Add workouts"). The largest type in the
+  app — this is a compact product UI, not a marketing page; it never shouts.
 - **Title** (600, `1rem`–`1.125rem`, tight): section headings, card and brand marks.
 - **Body** (400, `0.875rem`/text-sm, 1.5): the default — copy, controls, inputs,
   most metrics. Prose (AI analyses) renders at this size via the typography plugin.
@@ -264,7 +264,8 @@ used with a thumb, often right after a workout.
   compact `h-9` variant exists for inline selectors).
 - **Focus:** border shifts to `Signal Green` with a 1px `Signal Green` ring — the
   emerald "the instrument is listening" cue. Outline is never simply removed.
-- **Placeholder / adornments:** `Slate Faint` — decorative only, not load-bearing text.
+- **Placeholder / adornments:** readable placeholders use `Slate Muted`; purely
+  decorative icons and adornments may use `Slate Faint`.
 
 ### Navigation
 - **Desktop:** a fixed 256px left rail on `Surface`. Items are `rounded-lg`,
@@ -299,8 +300,8 @@ used with a thumb, often right after a workout.
   copy in `Ink`. Verify ≥4.5:1 (large text ≥3:1).
 - **Do** treat dark mode as first-class: build it, invert the neutral ramp, lift the
   accent toward `#34d399`, and re-verify contrast in both themes.
-- **Do** give every animation a `prefers-reduced-motion: reduce` alternative
-  (currently missing — the spinner and transitions need one).
+- **Do** preserve the global `prefers-reduced-motion: reduce` fallback and add
+  component-specific alternatives whenever motion carries meaning.
 - **Do** keep every tap target ≥44px and honour safe-area insets.
 
 ### Don't:

@@ -75,13 +75,8 @@ export function AnalyzePage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="mb-4 flex shrink-0 items-start justify-between gap-3 sm:mb-5">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Analyze</h1>
-          <p className="max-w-2xl text-sm text-slate-500">
-            Ask across your training history. Attach specific workouts for a focused comparison.
-          </p>
-        </div>
+      <h1 className="sr-only">Analyze</h1>
+      <div className="mb-2 flex shrink-0 justify-end sm:mb-3">
         <Button
           variant="secondary"
           onClick={() => setContextOpen(true)}
