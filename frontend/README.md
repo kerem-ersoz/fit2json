@@ -37,6 +37,18 @@ URL, never a token or other secret.
 Both servers already bind all interfaces. Start the backend with `--host 0.0.0.0`,
 then open `http://<your-laptop-ip>:5173` from a phone on the same Wi-Fi.
 
+### Run the iPhone WebKit regression
+
+The Playwright suite runs the Analyze page with an iPhone 16 Pro portrait profile. It
+checks real focus scaling and reproduces the iOS keyboard's VisualViewport pan so the
+fixed shell cannot regress.
+
+```bash
+cd frontend
+npx playwright install webkit
+npm run test:e2e:iphone
+```
+
 ## One-command run (built SPA served by the API)
 
 ```bash
@@ -129,4 +141,5 @@ until the computer and Tailscale are online.
 
 - `npm run dev` – Vite dev server
 - `npm run build` – type-check + production build
+- `npm run test:e2e:iphone` – iPhone 16 Pro WebKit viewport regression
 - `npm run typecheck` – TypeScript only
