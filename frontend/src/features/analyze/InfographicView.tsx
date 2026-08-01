@@ -268,8 +268,9 @@ export function InfographicView({ source }: { source: InfographicSource }) {
         ref={iframeRef}
         title="Workout infographic"
         sandbox="allow-scripts"
+        scrolling="no"
         src={viewUrl}
-        className="w-full rounded-xl border border-slate-200 bg-white"
+        className="w-full overflow-hidden rounded-xl border border-slate-200 bg-white"
         style={{ height: iframeHeight }}
       />
       <div className="mt-2 flex items-center justify-between gap-2">

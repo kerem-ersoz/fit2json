@@ -117,6 +117,19 @@ class TestRunCopilot:
         cmd = _FakePopen.last_cmd
         assert cmd[cmd.index("--model") + 1] == "claude-opus-4.8"
         assert cmd[cmd.index("--reasoning-effort") + 1] == "max"
+        assert "--context" not in cmd
+
+    @pytest.mark.parametrize("model", analyzer.COPILOT_LONG_CONTEXT_MODELS)
+    def test_long_context_model_passes_context_tier(self, monkeypatch, model):
+        monkeypatch.setattr(analyzer.shutil, "which", lambda name: "/usr/bin/copilot")
+        monkeypatch.setattr(analyzer.subprocess, "Popen", _FakePopen)
+        analyzer.run_copilot(
+            prompt="p", workout_paths=[], memory_dir=None,
+            model=model, stream=False,
+        )
+        cmd = _FakePopen.last_cmd
+        assert cmd[cmd.index("--model") + 1] == model
+        assert cmd[cmd.index("--context") + 1] == "long_context"
 
     def test_auto_with_effort_raises(self, monkeypatch):
         """'auto' + reasoning effort is rejected by the CLI, so fail fast with a clear error."""
@@ -129,6 +142,19 @@ class TestRunCopilot:
                 prompt="p", workout_paths=[], memory_dir=None,
                 model="auto", stream=False, reasoning_effort="max",
             )
+
+
+def test_infographic_prompt_prioritizes_latest_corrections():
+    prompt = analyzer.build_infographic_user_prompt(
+        "[Coach]\nVO2max is 45.\n\n[Coach]\nCorrection: the defensible estimate is 36."
+    )
+    assert "apply any later corrections" in prompt
+    assert "===== SOURCE =====" in prompt
+    assert "Correction: the defensible estimate is 36." in prompt
+    assert "Later coach responses override earlier claims" in analyzer.INFOGRAPHIC_SYSTEM_PROMPT
+    assert "baseline in slate" in analyzer.INFOGRAPHIC_SYSTEM_PROMPT
+    assert "current or target in green" in analyzer.INFOGRAPHIC_SYSTEM_PROMPT
+    assert "Caution Amber #d97706" in analyzer.INFOGRAPHIC_SYSTEM_PROMPT
 
 
 class _FakeMessage:

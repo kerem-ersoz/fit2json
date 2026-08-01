@@ -62,6 +62,7 @@ function SheetLens({ text, source }: { text: ReactNode; source: InfographicSourc
             </span>
           }
           onClose={() => setOpen(false)}
+          contentClassName="scrollbar-hidden flex-1 overflow-y-auto bg-slate-50/60 p-4"
         >
           <InfographicView source={source} />
         </Sheet>

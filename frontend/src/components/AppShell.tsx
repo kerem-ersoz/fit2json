@@ -1,7 +1,7 @@
 import { NavLink, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { clsx } from 'clsx'
-import { Brain, History, ListChecks, MessageSquare, Upload, User, type LucideIcon } from 'lucide-react'
+import { Brain, ListChecks, MessageSquare, Upload, User, type LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { api } from '../lib/api'
 import { useUnits } from '../lib/units'
@@ -19,7 +19,6 @@ interface NavItem {
 const NAV: NavItem[] = [
   { to: '/', label: 'Library', Icon: ListChecks, end: true },
   { to: '/analyze', label: 'Analyze', Icon: Brain },
-  { to: '/memory', label: 'Memory', Icon: History },
   { to: '/ingest', label: 'Add', Icon: Upload },
   { to: '/you', label: 'You', Icon: User },
 ]
@@ -109,8 +108,13 @@ function ChatHeaderButton() {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation()
+  const isAnalyze = location.pathname === '/analyze' || location.pathname === '/analyze/'
   return (
-    <div className="min-h-full lg:flex">
+    <div
+      className={clsx(
+        isAnalyze ? 'flex h-dvh flex-col overflow-hidden lg:flex-row' : 'min-h-full lg:flex',
+      )}
+    >
       {/* Desktop sidebar */}
       <aside className="hidden w-64 shrink-0 flex-col border-r border-slate-200 bg-white lg:flex">
         <div className="px-5 py-5">
@@ -136,9 +140,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             </NavLink>
           ))}
         </nav>
-        <div className="border-t border-slate-100 px-3 py-2">
-          <ChatSidebarButton />
-        </div>
+        {!isAnalyze && (
+          <div className="border-t border-slate-100 px-3 py-2">
+            <ChatSidebarButton />
+          </div>
+        )}
         <div className="space-y-3 px-5 py-4">
           <UnitsToggle />
           <div className="text-xs text-slate-400">Local · single-user</div>
@@ -150,20 +156,27 @@ export function AppShell({ children }: { children: ReactNode }) {
         <BrandMark compact />
         <div className="flex items-center gap-2">
           <UnitsToggle />
-          <ChatHeaderButton />
+          {!isAnalyze && <ChatHeaderButton />}
         </div>
       </header>
 
       {/* Main content */}
-      <main className="min-w-0 flex-1">
-        <div className="mx-auto max-w-5xl px-4 pb-24 pt-4 sm:px-6 lg:px-8 lg:pb-10 lg:pt-8">
+      <main className={clsx('min-w-0 flex-1', isAnalyze && 'min-h-0')}>
+        <div
+          className={clsx(
+            'mx-auto px-4 sm:px-6 lg:px-8',
+            isAnalyze
+              ? 'flex h-full max-w-[90rem] flex-col overflow-hidden pb-[calc(4.5rem+env(safe-area-inset-bottom))] pt-4 lg:pb-6 lg:pt-6'
+              : 'max-w-5xl pb-24 pt-4 lg:pb-10 lg:pt-8',
+          )}
+        >
           <ErrorBoundary resetKey={location.pathname}>{children}</ErrorBoundary>
         </div>
       </main>
 
       {/* Mobile bottom tab bar */}
       <nav
-        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-slate-200 bg-white/95 backdrop-blur lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-slate-200 bg-white/95 backdrop-blur lg:hidden"
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
         {NAV.map(({ to, label, Icon, end }) => (
@@ -184,9 +197,11 @@ export function AppShell({ children }: { children: ReactNode }) {
         ))}
       </nav>
 
-      <ErrorBoundary compact label="The chat pane hit an error">
-        <ChatDock />
-      </ErrorBoundary>
+      {!isAnalyze && (
+        <ErrorBoundary compact label="The chat pane hit an error">
+          <ChatDock />
+        </ErrorBoundary>
+      )}
     </div>
   )
 }

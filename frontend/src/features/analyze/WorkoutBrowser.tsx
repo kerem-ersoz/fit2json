@@ -17,16 +17,31 @@ interface Props {
   controls: ComponentProps<typeof WorkoutControls>
   listRef?: RefObject<HTMLUListElement>
   hrMax: number
+  surface?: 'page' | 'sheet'
 }
 
-/** Filterable, multi-selectable list of workouts (the left pane of the Analyze workspace). */
-export function WorkoutBrowser({ activities, selectedIds, onToggle, onToggleAll, controls, listRef, hrMax }: Props) {
+/** Filterable, multi-selectable list of workouts used as context for the Analyze workspace. */
+export function WorkoutBrowser({
+  activities,
+  selectedIds,
+  onToggle,
+  onToggleAll,
+  controls,
+  listRef,
+  hrMax,
+  surface = 'page',
+}: Props) {
   const allSelected = activities.length > 0 && activities.every((a) => selectedIds.has(a.id))
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white">
-      <div className="space-y-3 border-b border-slate-100 p-3 sm:p-4">
-        <WorkoutControls {...controls} />
+    <div
+      className={clsx(
+        'rounded-xl border border-slate-200 bg-white',
+        surface === 'sheet' && 'flex h-full min-h-0 flex-col',
+      )}
+    >
+      <div className="shrink-0 space-y-3 border-b border-slate-100 p-3 sm:p-4">
+        <WorkoutControls {...controls} layout="stacked" />
         <div className="flex items-center justify-between gap-3">
           <button
             type="button"
@@ -44,7 +59,12 @@ export function WorkoutBrowser({ activities, selectedIds, onToggle, onToggleAll,
       ) : (
         <ul
           ref={listRef}
-          className="max-h-[22rem] divide-y divide-slate-100 overflow-y-auto lg:max-h-[calc(100vh-15rem)]"
+          className={clsx(
+            'divide-y divide-slate-100 overflow-y-auto',
+            surface === 'sheet'
+              ? 'min-h-0 flex-1'
+              : 'max-h-[22rem] lg:max-h-[calc(100vh-15rem)]',
+          )}
         >
           {activities.map((a) => (
             <WorkoutRow key={a.id} activity={a} selected={selectedIds.has(a.id)} onToggle={onToggle} hrMax={hrMax} />

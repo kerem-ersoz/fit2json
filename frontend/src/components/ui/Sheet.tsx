@@ -18,6 +18,8 @@ export function Sheet({
   onClose,
   children,
   footer,
+  contentClassName,
+  size = 'default',
   labelledById = 'sheet-title',
 }: {
   title: string
@@ -26,6 +28,8 @@ export function Sheet({
   onClose: () => void
   children: ReactNode
   footer?: ReactNode
+  contentClassName?: string
+  size?: 'default' | 'wide'
   labelledById?: string
 }) {
   const [mounted, setMounted] = useState(false)
@@ -71,7 +75,8 @@ export function Sheet({
         aria-labelledby={labelledById}
         className={[
           'relative z-10 flex w-full max-h-[92vh] flex-col overflow-hidden border-slate-200 bg-white shadow-xl',
-          'rounded-t-2xl border sm:h-full sm:max-h-none sm:w-full sm:max-w-xl sm:rounded-none sm:rounded-l-2xl sm:border-l',
+          'rounded-t-2xl border sm:h-full sm:max-h-none sm:w-full sm:rounded-none sm:rounded-l-2xl sm:border-l',
+          size === 'wide' ? 'sm:max-w-4xl' : 'sm:max-w-xl',
           reduced ? '' : 'transition-transform duration-200 ease-out',
           shown ? 'translate-y-0 sm:translate-x-0' : 'translate-y-6 sm:translate-y-0 sm:translate-x-8',
         ].join(' ')}
@@ -97,7 +102,7 @@ export function Sheet({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto bg-slate-50/60 p-4">{children}</div>
+        <div className={contentClassName ?? 'flex-1 overflow-y-auto bg-slate-50/60 p-4'}>{children}</div>
 
         {footer && (
           <div className="border-t border-slate-100 px-4 py-3">{footer}</div>

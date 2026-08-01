@@ -90,6 +90,19 @@ _BASE_STYLE = (
     "sans-serif;color:#0f172a;background:#ffffff;line-height:1.5;}"
 )
 
+# Runtime compatibility rules apply to both newly generated and already-cached HTML.
+# Scrolling remains available, but embedded visuals do not show nested scrollbars. The
+# track/fill rule repairs a common model output bug where percentage-sized <span> fills
+# stay inline and therefore render at 0x0.
+_RUNTIME_STYLE = (
+    "*{scrollbar-width:none;-ms-overflow-style:none;}"
+    "*::-webkit-scrollbar{display:none;width:0;height:0;}"
+    ".track>.fill{display:block;height:100%;min-width:0;background:#64748b;}"
+    ".track>.fill.on,.track>.fill.current{background:#059669;}"
+    ".track>.fill.caution{background:#d97706;}"
+    ".metrics>:has(.accent),.metrics>.hero,.metric.hero{background:#ecfdf5;}"
+)
+
 
 def clean_html(raw: str) -> str:
     """Strip code fences / stray preamble, keeping just the HTML document."""
@@ -107,7 +120,7 @@ def clean_html(raw: str) -> str:
 
 
 def servable_doc(html: str, nonce: str) -> str:
-    """Wrap a fragment in a minimal document if needed and inject the nonced resize script."""
+    """Wrap fragments and inject compatibility CSS plus the nonced resize script."""
     doc = html
     if not re.search(r"<!doctype", doc, re.I) and not re.search(r"<html[\s>]", doc, re.I):
         doc = (
@@ -115,6 +128,19 @@ def servable_doc(html: str, nonce: str) -> str:
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
             f"<style>{_BASE_STYLE}</style></head><body>{doc}</body></html>"
         )
+    runtime_style = f'<style id="fitsift-runtime">{_RUNTIME_STYLE}</style>'
+    if re.search(r"</head>", doc, re.I):
+        doc = re.sub(r"</head>", runtime_style + "</head>", doc, count=1, flags=re.I)
+    elif re.search(r"<body(?:\s[^>]*)?>", doc, re.I):
+        doc = re.sub(
+            r"(<body(?:\s[^>]*)?>)",
+            lambda match: match.group(1) + runtime_style,
+            doc,
+            count=1,
+            flags=re.I,
+        )
+    else:
+        doc = runtime_style + doc
     script = _RESIZE_TEMPLATE.format(nonce=nonce)
     if re.search(r"</body>", doc, re.I):
         return re.sub(r"</body>", script + "</body>", doc, count=1, flags=re.I)
