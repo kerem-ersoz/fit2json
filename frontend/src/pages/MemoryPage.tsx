@@ -42,6 +42,7 @@ function MemoryEntryItem({ entry }: { entry: AnalysisEntry }) {
             content={data.content ?? ''}
             prompt={data.prompt}
             meta={`${data.backend ?? ''}${data.model ? ` · ${data.model}` : ''}`}
+            entryId={entry.entry_id}
           />
         )}
       </div>

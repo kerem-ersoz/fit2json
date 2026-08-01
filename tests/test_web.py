@@ -460,6 +460,194 @@ def test_analyze_charts_can_be_disabled(client, monkeypatch):
     assert "fitsift-chart" not in captured["prompt"]
 
 
+# ── infographic (optional second pass) ───────────────────────────────────────
+
+
+def test_infographic_streams_html(client, monkeypatch):
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+    captured: dict = {}
+
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False,
+                    reasoning_effort=None, system_prompt=None, final_instruction=None, **kwargs):
+        captured["prompt"] = prompt
+        captured["system_prompt"] = system_prompt
+        captured["final_instruction"] = final_instruction
+        captured["workout_paths"] = workout_paths
+        yield "<!doctype html><html><body>"
+        yield "<h1>Strong run</h1></body></html>"
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+
+    r = client.post("/api/infographic", json={"analysis": "You ran 10k at threshold. Avg HR 165."})
+    assert r.status_code == 200
+    body = r.text
+    assert "event: start" in body
+    assert "event: delta" in body
+    assert "<!doctype html>" in body
+    assert "event: done" in body
+
+    # The infographic pass uses its own system prompt + HTML trailer, carries no workout
+    # files, and feeds the analysis text into the user prompt.
+    assert captured["system_prompt"] == analyzer.INFOGRAPHIC_SYSTEM_PROMPT
+    assert captured["final_instruction"] == analyzer.INFOGRAPHIC_FINAL_INSTRUCTION
+    assert captured["workout_paths"] == []
+    assert "You ran 10k at threshold" in captured["prompt"]
+
+
+def _run_infographic(client, monkeypatch, html_chunks):
+    """Drive one infographic stream and return the `done` event's data dict."""
+    import json as _json
+
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False,
+                    reasoning_effort=None, system_prompt=None, final_instruction=None, **kwargs):
+        yield from html_chunks
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+
+    r = client.post("/api/infographic", json={"analysis": "ran 10k"})
+    assert r.status_code == 200
+    done = None
+    for frame in r.text.split("\n\n"):
+        if "event: done" in frame:
+            data_line = [ln for ln in frame.splitlines() if ln.startswith("data:")][0]
+            done = _json.loads(data_line[len("data:"):].strip())
+    return done
+
+
+def test_infographic_view_serves_stashed_html(client, monkeypatch):
+    done = _run_infographic(
+        client, monkeypatch, ["<!doctype html><html><body><h1>Nice run</h1></body></html>"]
+    )
+    assert done and done.get("id")
+
+    v = client.get(f"/api/infographic/view/{done['id']}")
+    assert v.status_code == 200
+    assert v.headers["content-type"].startswith("text/html")
+    assert "<h1>Nice run</h1>" in v.text
+    # A tightly-scoped CSP is applied and a nonced resize script is injected.
+    csp = v.headers.get("content-security-policy", "")
+    assert "default-src 'none'" in csp
+    nonce = csp.split("script-src 'nonce-")[1].split("'")[0]
+    assert f'<script nonce="{nonce}">' in v.text
+    assert "__fitsift_ig_height" in v.text
+
+
+def test_infographic_view_unknown_token_404(client):
+    assert client.get("/api/infographic/view/nope-not-real").status_code == 404
+
+
+def test_infographic_requires_analysis(client):
+    assert client.post("/api/infographic", json={"analysis": "   "}).status_code == 422
+    assert client.post("/api/infographic", json={}).status_code == 422
+
+
+def test_infographic_forwards_model_and_effort(client, monkeypatch):
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+    captured: dict = {}
+
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False,
+                    reasoning_effort=None, system_prompt=None, final_instruction=None, **kwargs):
+        captured["model"] = model
+        captured["reasoning_effort"] = reasoning_effort
+        yield "<html></html>"
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+
+    r = client.post(
+        "/api/infographic",
+        json={"analysis": "a", "model": "claude-x", "reasoning_effort": "high"},
+    )
+    assert r.status_code == 200
+    assert captured["model"] == "claude-x"
+    assert captured["reasoning_effort"] == "high"
+
+
+def test_infographic_reports_backend_errors(client, monkeypatch):
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+
+    def boom(*a, **k):
+        raise RuntimeError("model exploded")
+        yield  # pragma: no cover - marks this a generator
+
+    monkeypatch.setattr(analyzer, "stream_copilot", boom)
+
+    r = client.post("/api/infographic", json={"analysis": "a"})
+    assert r.status_code == 200
+    assert "event: error" in r.text
+    assert "model exploded" in r.text
+
+
+# ── memory infographic (persisted per saved analysis) ────────────────────────
+
+
+def _make_memory_entry(client, monkeypatch):
+    """Run one analysis so it's saved to memory; return its entry_id. The stubbed model
+    returns coach markdown for the analysis pass and HTML for the infographic pass."""
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False,
+                    reasoning_effort=None, system_prompt=None, final_instruction=None, **kwargs):
+        if system_prompt == analyzer.INFOGRAPHIC_SYSTEM_PROMPT:
+            yield "<!doctype html><html><body><h1>Viz</h1></body></html>"
+        else:
+            yield "## Analysis\nSolid run."
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+
+    aid = client.get("/api/activities").json()[0]["id"]
+    assert client.post("/api/analyze", json={"activity_id": aid, "prompt": "How did I do?"}).status_code == 200
+    entries = client.get("/api/memory").json()["entries"]
+    assert entries
+    return entries[0]["entry_id"]
+
+
+def test_memory_infographic_generate_persist_and_serve(client, monkeypatch):
+    entry_id = _make_memory_entry(client, monkeypatch)
+
+    # Nothing cached yet.
+    assert client.get(f"/api/memory/{entry_id}/infographic").json()["exists"] is False
+
+    # Generate → streams progress and persists.
+    r = client.post(f"/api/memory/{entry_id}/infographic")
+    assert r.status_code == 200
+    assert "event: done" in r.text and "<!doctype html>" in r.text
+
+    # Now cached (survives via the on-disk sidecar).
+    status = client.get(f"/api/memory/{entry_id}/infographic").json()
+    assert status["exists"] is True and status["generated_at"]
+
+    # View is a CSP'd page with a nonced resize script.
+    v = client.get(f"/api/memory/{entry_id}/infographic/view")
+    assert v.status_code == 200 and v.headers["content-type"].startswith("text/html")
+    assert "<h1>Viz</h1>" in v.text
+    assert "default-src 'none'" in v.headers.get("content-security-policy", "")
+    assert "__fitsift_ig_height" in v.text
+
+    # Raw is the stored HTML for copy/download — no resize shim.
+    raw = client.get(f"/api/memory/{entry_id}/infographic/raw")
+    assert raw.status_code == 200 and "<h1>Viz</h1>" in raw.text
+    assert "__fitsift_ig_height" not in raw.text
+
+
+def test_memory_infographic_unknown_entry_404(client):
+    assert client.get("/api/memory/nope/infographic").status_code == 404
+    assert client.get("/api/memory/nope/infographic/view").status_code == 404
+    assert client.get("/api/memory/nope/infographic/raw").status_code == 404
+    assert client.post("/api/memory/nope/infographic").status_code == 404
+
+
 # ── athlete profile ("You" tab) ──────────────────────────────────────────────
 
 

@@ -55,6 +55,28 @@ class AnalyzeRequest(BaseModel):
     charts: bool = True
 
 
+class InfographicRequest(BaseModel):
+    """Optional second pass: re-render a finished analysis as an HTML infographic.
+
+    ``analysis`` is the markdown analysis text to visualize. The model/backend fields
+    mirror :class:`AnalyzeRequest` so the infographic can be produced at the same tier
+    as the analysis it came from.
+    """
+
+    analysis: str
+    backend: Optional[str] = None
+    model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
+
+
+class InfographicOptions(BaseModel):
+    """Optional generation controls for a saved analysis's infographic (all default)."""
+
+    backend: Optional[str] = None
+    model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
+
+
 class FetchRequest(BaseModel):
     days: int = 30
     email: Optional[str] = None

@@ -22,6 +22,7 @@ import { sportMeta } from '../../lib/sport'
 import { formatDate } from '../../lib/format'
 import { Button } from '../../components/ui/Button'
 import { MarkdownView } from '../../components/ui/Markdown'
+import { AnalysisLens } from '../analyze/AnalysisLens'
 import { CUSTOM_MODEL, useChat, type Msg } from './ChatProvider'
 
 const selectClass =
@@ -434,7 +435,19 @@ function ChatView({
         ) : (
           <div className="space-y-4">
             {chat.messages.map((m) => (
-              <MessageBubble key={m.id} msg={m} running={chat.running} />
+              <MessageBubble
+                key={m.id}
+                msg={m}
+                running={chat.running}
+                lens={{
+                  backend: chat.backend || undefined,
+                  model:
+                    !chat.effectiveModel || chat.effectiveModel === 'auto'
+                      ? undefined
+                      : chat.effectiveModel,
+                  reasoningEffort: chat.effort || undefined,
+                }}
+              />
             ))}
             {chat.error && (
               <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
@@ -720,7 +733,15 @@ function StepList({ steps, running }: { steps: MapStep[]; running: boolean }) {
   )
 }
 
-function MessageBubble({ msg, running }: { msg: Msg; running: boolean }) {
+function MessageBubble({
+  msg,
+  running,
+  lens,
+}: {
+  msg: Msg
+  running: boolean
+  lens: { backend?: string; model?: string; reasoningEffort?: string }
+}) {
   if (msg.role === 'user') {
     return (
       <div className="flex justify-end">
@@ -730,11 +751,26 @@ function MessageBubble({ msg, running }: { msg: Msg; running: boolean }) {
       </div>
     )
   }
+  const done = !!msg.content.trim() && !running
   return (
     <div className="min-w-0">
       {msg.steps && msg.steps.length > 0 && <StepList steps={msg.steps} running={running} />}
       {msg.content ? (
-        <MarkdownView>{msg.content}</MarkdownView>
+        done ? (
+          <AnalysisLens
+            surface="sheet"
+            source={{
+              kind: 'ephemeral',
+              analysis: msg.content,
+              backend: lens.backend,
+              model: lens.model,
+              reasoningEffort: lens.reasoningEffort,
+            }}
+            text={<MarkdownView>{msg.content}</MarkdownView>}
+          />
+        ) : (
+          <MarkdownView>{msg.content}</MarkdownView>
+        )
       ) : !msg.steps?.length && running ? (
         <p className="text-sm text-slate-400">Waiting for the model…</p>
       ) : null}

@@ -24,18 +24,10 @@ from fit2json.memory import MemoryStore
 from fit2json.web import services
 from fit2json.web.config import get_settings
 from fit2json.web.schemas import AnalyzeRequest
+from fit2json.web.sse import SSE_HEADERS
+from fit2json.web.sse import sse as _sse
 
 router = APIRouter(tags=["analyze"])
-
-SSE_HEADERS = {
-    "Cache-Control": "no-cache",
-    "X-Accel-Buffering": "no",
-    "Connection": "keep-alive",
-}
-
-
-def _sse(event: str, data: dict) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 def _stream_text(backend: str, prompt: str, model, reasoning_effort, athlete_profile=None) -> Iterator[str]:
