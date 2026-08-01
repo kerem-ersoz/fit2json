@@ -20,6 +20,8 @@ def client(tmp_path, monkeypatch):
 
     monkeypatch.setenv("FITSIFT_LIBRARY", str(library))
     monkeypatch.setenv("FITSIFT_MEMORY", str(tmp_path / "memory"))
+    monkeypatch.setenv("FITSIFT_PROFILE", str(tmp_path / "profile.json"))
+    monkeypatch.setenv("FITSIFT_CHATS", str(tmp_path / "chats"))
 
     # Rebuild the app + service caches against the patched environment.
     from fit2json.web import app as app_module
@@ -42,6 +44,7 @@ def test_config(client):
     body = r.json()
     assert body["brand"]["name"] == "FitSift"
     assert "copilot" in body["backends"]
+    assert body["chats_dir"].endswith("chats")
 
 
 def test_models_copilot(client):
@@ -49,7 +52,9 @@ def test_models_copilot(client):
     assert r.status_code == 200
     body = r.json()
     assert body["backend"] == "copilot"
-    assert body["models"][0] == "auto"  # always offered; fresh corpus has no others yet
+    assert body["models"][0] == "auto"
+    assert "gpt-5.6-sol" in body["models"]
+    assert "claude-opus-5" in body["models"]
     assert body["allow_custom"] is True
     # Effort levels are exposed (from the CLI, or the known fallback when it's absent).
     assert "high" in body["efforts"] and "medium" in body["efforts"]
@@ -143,7 +148,8 @@ def test_analyze_streams_and_saves(client, monkeypatch):
 
     monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
 
-    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False, reasoning_effort=None):
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False,
+                    reasoning_effort=None, athlete_profile=None, **kwargs):
         assert workout_paths and workout_paths[0].exists()
         assert silent is True  # web path uses --silent to strip the copilot tool-trace
         yield "## Analysis\n"
@@ -181,7 +187,7 @@ def test_analyze_accepts_activity_ids(client, monkeypatch):
     monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
     captured: dict = {}
 
-    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False, reasoning_effort=None):
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False, reasoning_effort=None, **kwargs):
         captured["paths"] = list(workout_paths)
         yield "ok"
 
@@ -202,6 +208,87 @@ def test_analyze_requires_prompt(client):
     assert client.post("/api/analyze", json={"prompt": "   "}).status_code == 422
 
 
+def test_chats_empty_then_upsert_and_resume(client):
+    # A fresh corpus has no saved chats.
+    assert client.get("/api/chats").json() == {"chats": []}
+
+    # PUT upserts (create-on-first-save): the client owns the id.
+    body = {
+        "backend": "copilot",
+        "model": "auto",
+        "activity_ids": ["a1", "a2"],
+        "messages": [
+            {"id": "m1", "role": "user", "content": "How did my week go?"},
+            {"id": "m2", "role": "assistant", "content": "Strong and consistent."},
+        ],
+    }
+    r = client.put("/api/chats/chat-123", json=body)
+    assert r.status_code == 200
+    saved = r.json()
+    assert saved["id"] == "chat-123"
+    assert saved["title"] == "How did my week go?"  # derived from first user message
+    assert saved["created_at"] and saved["updated_at"]
+    assert [m["content"] for m in saved["messages"]] == ["How did my week go?", "Strong and consistent."]
+
+    # It now shows in the history summary (no message bodies, but a count).
+    listed = client.get("/api/chats").json()["chats"]
+    assert len(listed) == 1
+    assert listed[0]["id"] == "chat-123"
+    assert listed[0]["message_count"] == 2
+    assert listed[0]["activity_ids"] == ["a1", "a2"]
+    assert "messages" not in listed[0]
+
+    # And can be resumed in full.
+    full = client.get("/api/chats/chat-123").json()
+    assert len(full["messages"]) == 2
+    assert full["activity_ids"] == ["a1", "a2"]
+
+
+def test_chats_update_preserves_created_at_and_delete(client):
+    first = client.put(
+        "/api/chats/c1",
+        json={"messages": [{"id": "m1", "role": "user", "content": "Hi"}]},
+    ).json()
+
+    # A second save keeps created_at but advances the transcript.
+    second = client.put(
+        "/api/chats/c1",
+        json={
+            "title": "My renamed chat",
+            "messages": [
+                {"id": "m1", "role": "user", "content": "Hi"},
+                {"id": "m2", "role": "assistant", "content": "Hello!"},
+            ],
+        },
+    ).json()
+    assert second["created_at"] == first["created_at"]
+    assert second["title"] == "My renamed chat"
+    assert len(second["messages"]) == 2
+
+    assert client.delete("/api/chats/c1").status_code == 200
+    assert client.get("/api/chats/c1").status_code == 404
+    assert client.delete("/api/chats/c1").status_code == 404
+
+
+def test_chats_missing_returns_404(client):
+    assert client.get("/api/chats/nope").status_code == 404
+
+
+def test_chat_id_is_path_safe(client, tmp_path):
+    # An id with unsafe characters is sanitized to a single plain filename inside the
+    # chats dir — no subdirectories, nothing escaping the directory.
+    r = client.put(
+        "/api/chats/chat@2024!weird",
+        json={"messages": [{"id": "m1", "role": "user", "content": "hey"}]},
+    )
+    assert r.status_code == 200
+    assert r.json()["id"] == "chat-2024-weird"
+
+    chats_dir = tmp_path / "chats"
+    entries = list(chats_dir.iterdir())
+    assert entries == [chats_dir / "chat-2024-weird.json"]  # one flat file, no nesting
+
+
 def test_analyze_freeform_no_selection(client, monkeypatch):
     """With no workouts selected, the agent is handed the whole library to find them itself."""
     from fit2json import analyzer
@@ -209,7 +296,7 @@ def test_analyze_freeform_no_selection(client, monkeypatch):
     monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
     captured: dict = {}
 
-    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False, reasoning_effort=None, library_dir=None):
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False, reasoning_effort=None, library_dir=None, **kwargs):
         captured["workout_paths"] = list(workout_paths)
         captured["library_dir"] = library_dir
         yield "Across your recent long runs…"
@@ -241,7 +328,7 @@ def test_analyze_multi_workout_map_reduce(client, monkeypatch):
 
     monkeypatch.setattr(services, "generate_workout_analysis", fake_generate)
 
-    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False, reasoning_effort=None):
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False, reasoning_effort=None, **kwargs):
         # The synthesis reasons over the per-workout analyses, not the raw workout files.
         assert workout_paths == []
         assert "per-workout analysis 1" in prompt and "per-workout analysis 2" in prompt
@@ -274,7 +361,7 @@ def test_analyze_reuses_compatible_analysis(client, monkeypatch):
 
     monkeypatch.setattr(services, "generate_workout_analysis", no_generate)
 
-    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False, reasoning_effort=None):
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False, reasoning_effort=None, **kwargs):
         assert "REUSED BLOCK" in prompt
         yield "ok"
 
@@ -285,13 +372,60 @@ def test_analyze_reuses_compatible_analysis(client, monkeypatch):
     assert r.status_code == 200 and "event: done" in r.text
 
 
+def test_analyze_freeform_injects_profile(client, monkeypatch):
+    """The freeform (no-selection) coach path also personalizes with the "You" profile."""
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+    captured: dict = {}
+
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False,
+                    reasoning_effort=None, library_dir=None, athlete_profile=None, **kwargs):
+        captured["athlete_profile"] = athlete_profile
+        yield "ok"
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+    client.put("/api/profile", json={"max_hr": 185, "goals": "Marathon PR"})
+
+    r = client.post("/api/analyze", json={"prompt": "How is my training trending?"})
+    assert r.status_code == 200
+    assert captured["athlete_profile"] is not None
+    assert "Max HR: 185 bpm" in captured["athlete_profile"]
+
+
+def test_analyze_multi_synthesis_injects_profile(client, monkeypatch):
+    """The multi-workout synthesis (REDUCE) personalizes with the "You" profile."""
+    from fit2json import analyzer
+    from fit2json.web import services
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+    monkeypatch.setattr(services, "latest_compatible_analysis", lambda *a, **k: "BLOCK")
+    monkeypatch.setattr(services, "generate_workout_analysis", lambda *a, **k: "BLOCK")
+    captured: dict = {}
+
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False,
+                    reasoning_effort=None, athlete_profile=None, **kwargs):
+        captured["athlete_profile"] = athlete_profile
+        yield "ok"
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+    client.put("/api/profile", json={"ftp_w": 250, "goals": "FTP boost"})
+
+    aid = client.get("/api/activities").json()[0]["id"]
+    r = client.post("/api/analyze", json={"activity_ids": [aid, aid], "prompt": "compare"})
+    assert r.status_code == 200
+    assert captured["athlete_profile"] is not None
+    assert "FTP: 250 W" in captured["athlete_profile"]
+
+
 def test_analyze_appends_chart_guidance(client, monkeypatch):
     from fit2json import analyzer
 
     monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
     captured: dict = {}
 
-    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False, reasoning_effort=None):
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False,
+                    reasoning_effort=None, athlete_profile=None, **kwargs):
         captured["prompt"] = prompt
         yield "ok"
 
@@ -313,7 +447,8 @@ def test_analyze_charts_can_be_disabled(client, monkeypatch):
     monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
     captured: dict = {}
 
-    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False, reasoning_effort=None):
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False,
+                    reasoning_effort=None, athlete_profile=None, **kwargs):
         captured["prompt"] = prompt
         yield "ok"
 
@@ -327,13 +462,321 @@ def test_analyze_charts_can_be_disabled(client, monkeypatch):
     assert "fitsift-chart" not in captured["prompt"]
 
 
+# ── infographic (optional second pass) ───────────────────────────────────────
+
+
+def test_infographic_streams_html(client, monkeypatch):
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+    captured: dict = {}
+
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False,
+                    reasoning_effort=None, system_prompt=None, final_instruction=None, **kwargs):
+        captured["prompt"] = prompt
+        captured["system_prompt"] = system_prompt
+        captured["final_instruction"] = final_instruction
+        captured["workout_paths"] = workout_paths
+        yield "<!doctype html><html><body>"
+        yield "<h1>Strong run</h1></body></html>"
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+
+    r = client.post("/api/infographic", json={"analysis": "You ran 10k at threshold. Avg HR 165."})
+    assert r.status_code == 200
+    body = r.text
+    assert "event: start" in body
+    assert "event: delta" in body
+    assert "<!doctype html>" in body
+    assert "event: done" in body
+
+    # The infographic pass uses its own system prompt + HTML trailer, carries no workout
+    # files, and feeds the analysis text into the user prompt.
+    assert captured["system_prompt"] == analyzer.INFOGRAPHIC_SYSTEM_PROMPT
+    assert captured["final_instruction"] == analyzer.INFOGRAPHIC_FINAL_INSTRUCTION
+    assert captured["workout_paths"] == []
+    assert "You ran 10k at threshold" in captured["prompt"]
+
+
+def _run_infographic(client, monkeypatch, html_chunks):
+    """Drive one infographic stream and return the `done` event's data dict."""
+    import json as _json
+
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False,
+                    reasoning_effort=None, system_prompt=None, final_instruction=None, **kwargs):
+        yield from html_chunks
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+
+    r = client.post("/api/infographic", json={"analysis": "ran 10k"})
+    assert r.status_code == 200
+    done = None
+    for frame in r.text.split("\n\n"):
+        if "event: done" in frame:
+            data_line = [ln for ln in frame.splitlines() if ln.startswith("data:")][0]
+            done = _json.loads(data_line[len("data:"):].strip())
+    return done
+
+
+def test_infographic_view_serves_stashed_html(client, monkeypatch):
+    done = _run_infographic(
+        client, monkeypatch, ["<!doctype html><html><body><h1>Nice run</h1></body></html>"]
+    )
+    assert done and done.get("id")
+
+    v = client.get(f"/api/infographic/view/{done['id']}")
+    assert v.status_code == 200
+    assert v.headers["content-type"].startswith("text/html")
+    assert "<h1>Nice run</h1>" in v.text
+    # A tightly-scoped CSP is applied and a nonced resize script is injected.
+    csp = v.headers.get("content-security-policy", "")
+    assert "default-src 'none'" in csp
+    nonce = csp.split("script-src 'nonce-")[1].split("'")[0]
+    assert f'<script nonce="{nonce}">' in v.text
+    assert "__fitsift_ig_height" in v.text
+    assert 'id="fitsift-runtime"' in v.text
+    assert "scrollbar-width:none" in v.text
+    assert ".track>.fill{display:block" in v.text
+    assert ".track>.fill.current{background:#059669" in v.text
+    assert ".track>.fill.caution{background:#d97706" in v.text
+
+
+def test_infographic_view_unknown_token_404(client):
+    assert client.get("/api/infographic/view/nope-not-real").status_code == 404
+
+
+def test_infographic_requires_analysis(client):
+    assert client.post("/api/infographic", json={"analysis": "   "}).status_code == 422
+    assert client.post("/api/infographic", json={}).status_code == 422
+
+
+def test_infographic_forwards_model_and_effort(client, monkeypatch):
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+    captured: dict = {}
+
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False,
+                    reasoning_effort=None, system_prompt=None, final_instruction=None, **kwargs):
+        captured["model"] = model
+        captured["reasoning_effort"] = reasoning_effort
+        yield "<html></html>"
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+
+    r = client.post(
+        "/api/infographic",
+        json={"analysis": "a", "model": "claude-x", "reasoning_effort": "high"},
+    )
+    assert r.status_code == 200
+    assert captured["model"] == "claude-x"
+    assert captured["reasoning_effort"] == "high"
+
+
+def test_infographic_reports_backend_errors(client, monkeypatch):
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+
+    def boom(*a, **k):
+        raise RuntimeError("model exploded")
+        yield  # pragma: no cover - marks this a generator
+
+    monkeypatch.setattr(analyzer, "stream_copilot", boom)
+
+    r = client.post("/api/infographic", json={"analysis": "a"})
+    assert r.status_code == 200
+    assert "event: error" in r.text
+    assert "model exploded" in r.text
+
+
+# ── memory infographic (persisted per saved analysis) ────────────────────────
+
+
+def _make_memory_entry(client, monkeypatch):
+    """Run one analysis so it's saved to memory; return its entry_id. The stubbed model
+    returns coach markdown for the analysis pass and HTML for the infographic pass."""
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False,
+                    reasoning_effort=None, system_prompt=None, final_instruction=None, **kwargs):
+        if system_prompt == analyzer.INFOGRAPHIC_SYSTEM_PROMPT:
+            yield "<!doctype html><html><body><h1>Viz</h1></body></html>"
+        else:
+            yield "## Analysis\nSolid run."
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+
+    aid = client.get("/api/activities").json()[0]["id"]
+    assert client.post("/api/analyze", json={"activity_id": aid, "prompt": "How did I do?"}).status_code == 200
+    entries = client.get("/api/memory").json()["entries"]
+    assert entries
+    return entries[0]["entry_id"]
+
+
+def test_memory_infographic_generate_persist_and_serve(client, monkeypatch):
+    entry_id = _make_memory_entry(client, monkeypatch)
+
+    # Nothing cached yet.
+    assert client.get(f"/api/memory/{entry_id}/infographic").json()["exists"] is False
+
+    # Generate → streams progress and persists.
+    r = client.post(f"/api/memory/{entry_id}/infographic")
+    assert r.status_code == 200
+    assert "event: done" in r.text and "<!doctype html>" in r.text
+
+    # Now cached (survives via the on-disk sidecar).
+    status = client.get(f"/api/memory/{entry_id}/infographic").json()
+    assert status["exists"] is True and status["generated_at"]
+
+    # View is a CSP'd page with a nonced resize script.
+    v = client.get(f"/api/memory/{entry_id}/infographic/view")
+    assert v.status_code == 200 and v.headers["content-type"].startswith("text/html")
+    assert "<h1>Viz</h1>" in v.text
+    assert "default-src 'none'" in v.headers.get("content-security-policy", "")
+    assert "__fitsift_ig_height" in v.text
+
+    # Raw is the stored HTML for copy/download — no resize shim.
+    raw = client.get(f"/api/memory/{entry_id}/infographic/raw")
+    assert raw.status_code == 200 and "<h1>Viz</h1>" in raw.text
+    assert "__fitsift_ig_height" not in raw.text
+
+
+def test_memory_infographic_unknown_entry_404(client):
+    assert client.get("/api/memory/nope/infographic").status_code == 404
+    assert client.get("/api/memory/nope/infographic/view").status_code == 404
+    assert client.get("/api/memory/nope/infographic/raw").status_code == 404
+    assert client.post("/api/memory/nope/infographic").status_code == 404
+
+
+# ── athlete profile ("You" tab) ──────────────────────────────────────────────
+
+
+def test_profile_defaults_empty(client):
+    body = client.get("/api/profile").json()
+    # Every field present but null until the athlete configures it.
+    assert body["height_cm"] is None
+    assert body["max_hr"] is None
+    assert body["goals"] is None
+
+
+def test_profile_put_and_get_roundtrip(client):
+    payload = {
+        "name": "Sam",
+        "sex": "female",
+        "birth_year": 1992,
+        "height_cm": 170,
+        "weight_kg": 62.5,
+        "resting_hr": 46,
+        "max_hr": 188,
+        "lactate_threshold_hr": 170,
+        "ftp_w": 240,
+        "vo2max": 58.0,
+        "goals": "Run a sub-40 10k",
+    }
+    r = client.put("/api/profile", json=payload)
+    assert r.status_code == 200
+    saved = r.json()
+    assert saved["name"] == "Sam"
+    assert saved["weight_kg"] == 62.5
+
+    # Persisted across requests (read back from disk).
+    again = client.get("/api/profile").json()
+    assert again["max_hr"] == 188
+    assert again["goals"] == "Run a sub-40 10k"
+
+
+def test_profile_put_partial_clears_unset(client):
+    client.put("/api/profile", json={"height_cm": 180, "max_hr": 190})
+    # A subsequent save with only some fields does not retain the old ones.
+    client.put("/api/profile", json={"weight_kg": 70})
+    body = client.get("/api/profile").json()
+    assert body["weight_kg"] == 70
+    assert body["height_cm"] is None
+    assert body["max_hr"] is None
+
+
+def test_profile_rejects_out_of_range(client):
+    r = client.put("/api/profile", json={"max_hr": 999})
+    assert r.status_code == 422
+
+
+def test_profile_get_tolerates_bad_on_disk_value(client):
+    """A hand-edited profile.json with an out-of-range value must not 500 the GET."""
+    import json
+    import os
+    from pathlib import Path
+
+    path = Path(os.environ["FITSIFT_PROFILE"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"height_cm": 400, "max_hr": 190}), encoding="utf-8")
+
+    r = client.get("/api/profile")
+    assert r.status_code == 200
+    body = r.json()
+    # The offending field is dropped; the valid one survives.
+    assert body["height_cm"] is None
+    assert body["max_hr"] == 190
+
+
+def test_analyze_injects_profile(client, monkeypatch):
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+    captured: dict = {}
+
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False,
+                    reasoning_effort=None, athlete_profile=None, **kwargs):
+        captured["prompt"] = prompt
+        captured["athlete_profile"] = athlete_profile
+        yield "ok"
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+
+    client.put("/api/profile", json={"max_hr": 190, "weight_kg": 72, "goals": "Sub-3 marathon"})
+
+    aid = client.get("/api/activities").json()[0]["id"]
+    r = client.post("/api/analyze", json={"activity_id": aid, "prompt": "Coach me"})
+    assert r.status_code == 200
+    profile_block = captured["athlete_profile"]
+    assert profile_block is not None
+    assert "Max HR: 190 bpm" in profile_block
+    assert "Sub-3 marathon" in profile_block
+
+
+def test_analyze_without_profile_passes_none(client, monkeypatch):
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+    captured: dict = {}
+
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False,
+                    reasoning_effort=None, athlete_profile=None, **kwargs):
+        captured["athlete_profile"] = athlete_profile
+        yield "ok"
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+
+    aid = client.get("/api/activities").json()[0]["id"]
+    r = client.post("/api/analyze", json={"activity_id": aid, "prompt": "Coach me"})
+    assert r.status_code == 200
+    assert captured["athlete_profile"] is None
+
+
 def test_analyze_forwards_model_and_reasoning_effort(client, monkeypatch):
     from fit2json import analyzer
 
     monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
     captured: dict = {}
 
-    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False, reasoning_effort=None):
+    def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False,
+                    reasoning_effort=None, athlete_profile=None, **kwargs):
         captured["model"] = model
         captured["reasoning_effort"] = reasoning_effort
         yield "ok"
@@ -364,6 +807,8 @@ def empty_client(tmp_path, monkeypatch):
     library.mkdir()
     monkeypatch.setenv("FITSIFT_LIBRARY", str(library))
     monkeypatch.setenv("FITSIFT_MEMORY", str(tmp_path / "memory"))
+    monkeypatch.setenv("FITSIFT_PROFILE", str(tmp_path / "profile.json"))
+    monkeypatch.setenv("FITSIFT_CHATS", str(tmp_path / "chats"))
 
     from fit2json.web import app as app_module
     from fit2json.web import services

@@ -40,3 +40,6 @@ htmlcov/
 *.swp
 *.strava.json
 all-strava.json
+
+# impeccable design skill runtime cache
+.impeccable/hook.cache.json

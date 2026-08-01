@@ -8,8 +8,11 @@ import { useEffect, type RefObject } from 'react'
 export function useCardKeyboardNav(
   listRef: RefObject<HTMLElement>,
   searchRef: RefObject<HTMLInputElement>,
+  enabled = true,
 ) {
   useEffect(() => {
+    if (!enabled) return
+
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
       const typing =
@@ -39,5 +42,5 @@ export function useCardKeyboardNav(
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [listRef, searchRef])
+  }, [enabled, listRef, searchRef])
 }

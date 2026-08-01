@@ -24,6 +24,7 @@ export interface AppConfig {
   backends: { copilot: boolean; default: string }
   library_dir: string
   memory_dir: string
+  chats_dir: string
   base_path: string
   workout_prompt_default: string
 }
@@ -123,6 +124,59 @@ export interface FetchResult {
   fetched: number
 }
 
+export interface AthleteProfile {
+  name?: string | null
+  sex?: string | null
+  birth_year?: number | null
+  height_cm?: number | null
+  weight_kg?: number | null
+  resting_hr?: number | null
+  max_hr?: number | null
+  lactate_threshold_hr?: number | null
+  ftp_w?: number | null
+  vo2max?: number | null
+  goals?: string | null
+}
+
+export interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  created_at?: string
+}
+
+export interface ChatSummary {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+  message_count: number
+  backend: string
+  model: string
+  activity_ids: string[]
+}
+
+export interface Chat {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+  backend: string
+  model: string
+  reasoning_effort: string
+  activity_ids: string[]
+  messages: ChatMessage[]
+}
+
+export interface ChatSaveBody {
+  title?: string
+  backend?: string
+  model?: string
+  reasoning_effort?: string
+  activity_ids: string[]
+  messages: ChatMessage[]
+}
+
 export const api = {
   config: () => getJSON<AppConfig>('/config'),
   models: (backend: string) => getJSON<ModelInfo>(`/models?backend=${encodeURIComponent(backend)}`),
@@ -163,6 +217,37 @@ export const api = {
     })
     if (!res.ok) throw new Error(await errorText(res))
     return (await res.json()) as FetchResult
+  },
+
+  profile: () => getJSON<AthleteProfile>('/profile'),
+
+  saveProfile: async (profile: AthleteProfile): Promise<AthleteProfile> => {
+    const res = await fetch(`${API_BASE}/profile`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(profile),
+    })
+    if (!res.ok) throw new Error(await errorText(res))
+    return (await res.json()) as AthleteProfile
+  },
+
+  chats: () => getJSON<{ chats: ChatSummary[] }>('/chats'),
+
+  chat: (id: string) => getJSON<Chat>(`/chats/${encodeURIComponent(id)}`),
+
+  saveChat: async (id: string, body: ChatSaveBody): Promise<Chat> => {
+    const res = await fetch(`${API_BASE}/chats/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) throw new Error(await errorText(res))
+    return (await res.json()) as Chat
+  },
+
+  deleteChat: async (id: string): Promise<void> => {
+    const res = await fetch(`${API_BASE}/chats/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    if (!res.ok) throw new Error(await errorText(res))
   },
 }
 
@@ -225,25 +310,25 @@ function parseFrame(frame: string): SseFrame | null {
   }
 }
 
-/** POST /analyze and stream the Server-Sent Events back through the handlers. */
-export async function streamAnalyze(
-  body: AnalyzeBody,
-  handlers: StreamHandlers,
+/** POST a JSON body and return the streaming Response, or an error message string. */
+async function startSse(
+  path: string,
+  body: unknown,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<Response | string | null> {
   let res: Response
   try {
-    res = await fetch(`${API_BASE}/analyze`, {
+    res = await fetch(`${API_BASE}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
       signal,
     })
   } catch (e) {
-    handlers.onError?.((e as Error)?.message ?? 'Request failed')
-    return
+    // An intentional abort (Stop, navigation, unmount) is not an error — stop silently.
+    if ((e as Error)?.name === 'AbortError' || signal?.aborted) return null
+    return (e as Error)?.message ?? 'Request failed'
   }
-
   if (!res.ok || !res.body) {
     let msg = `${res.status} ${res.statusText}`
     try {
@@ -252,30 +337,151 @@ export async function streamAnalyze(
     } catch {
       /* ignore */
     }
-    handlers.onError?.(msg)
-    return
+    return msg
   }
+  return res
+}
 
-  const reader = res.body.getReader()
+/** Read an SSE Response body, dispatching each parsed frame. Stops silently when the
+ *  request is aborted via its AbortController; other stream errors propagate. */
+async function pumpSse(res: Response, onFrame: (frame: SseFrame) => void): Promise<void> {
+  const reader = res.body!.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
 
-  while (true) {
-    const { value, done } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    let sep: number
-    while ((sep = buffer.indexOf('\n\n')) !== -1) {
-      const frame = buffer.slice(0, sep)
-      buffer = buffer.slice(sep + 2)
-      const parsed = parseFrame(frame)
-      if (!parsed) continue
-      if (parsed.event === 'start') handlers.onStart?.(parsed.data.backend)
-      else if (parsed.event === 'step') handlers.onStep?.(parsed.data)
-      else if (parsed.event === 'reduce') handlers.onReduce?.(parsed.data)
-      else if (parsed.event === 'delta') handlers.onDelta(parsed.data.text ?? '')
-      else if (parsed.event === 'done') handlers.onDone?.(parsed.data)
-      else if (parsed.event === 'error') handlers.onError?.(parsed.data.message ?? 'Analysis failed')
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let sep: number
+      while ((sep = buffer.indexOf('\n\n')) !== -1) {
+        const frame = buffer.slice(0, sep)
+        buffer = buffer.slice(sep + 2)
+        const parsed = parseFrame(frame)
+        if (parsed) onFrame(parsed)
+      }
     }
+  } catch (e) {
+    if ((e as Error)?.name === 'AbortError') return // cancelled via AbortController — expected
+    throw e
   }
+}
+
+/** POST /analyze and stream the Server-Sent Events back through the handlers. */
+export async function streamAnalyze(
+  body: AnalyzeBody,
+  handlers: StreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  const started = await startSse('/analyze', body, signal)
+  if (started === null) return // aborted — stop silently
+  if (typeof started === 'string') {
+    handlers.onError?.(started)
+    return
+  }
+  await pumpSse(started, (parsed) => {
+    if (parsed.event === 'start') handlers.onStart?.(parsed.data.backend)
+    else if (parsed.event === 'step') handlers.onStep?.(parsed.data)
+    else if (parsed.event === 'reduce') handlers.onReduce?.(parsed.data)
+    else if (parsed.event === 'delta') handlers.onDelta(parsed.data.text ?? '')
+    else if (parsed.event === 'done') handlers.onDone?.(parsed.data)
+    else if (parsed.event === 'error') handlers.onError?.(parsed.data.message ?? 'Analysis failed')
+  })
+}
+
+export interface InfographicBody {
+  analysis: string
+  backend?: string | null
+  model?: string | null
+  reasoning_effort?: string | null
+}
+
+export interface InfographicHandlers {
+  onStart?: (backend: string) => void
+  onDelta: (text: string) => void
+  onDone?: (info: { chars: number; backend: string; id: string }) => void
+  onError?: (message: string) => void
+}
+
+/** URL that serves a finished infographic as a standalone page (for the iframe `src`). */
+export function infographicViewUrl(id: string): string {
+  return `${API_BASE}/infographic/view/${encodeURIComponent(id)}`
+}
+
+/** POST /infographic and stream the generated HTML back through the handlers. */
+export async function streamInfographic(
+  body: InfographicBody,
+  handlers: InfographicHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  const started = await startSse('/infographic', body, signal)
+  if (started === null) return // aborted — stop silently
+  if (typeof started === 'string') {
+    handlers.onError?.(started)
+    return
+  }
+  await pumpSse(started, (parsed) => {
+    if (parsed.event === 'start') handlers.onStart?.(parsed.data.backend)
+    else if (parsed.event === 'delta') handlers.onDelta(parsed.data.text ?? '')
+    else if (parsed.event === 'done') handlers.onDone?.(parsed.data)
+    else if (parsed.event === 'error') handlers.onError?.(parsed.data.message ?? 'Infographic failed')
+  })
+}
+
+// ── Persisted infographics for saved analyses (keyed by memory entry_id) ──────
+
+export interface InfographicOptions {
+  backend?: string | null
+  model?: string | null
+  reasoning_effort?: string | null
+}
+
+export interface MemoryInfographicHandlers {
+  onStart?: (backend: string) => void
+  onDelta: (text: string) => void
+  onDone?: (info: { chars: number; backend: string; generated_at: string | null }) => void
+  onError?: (message: string) => void
+}
+
+/** Whether a saved analysis already has a cached infographic. */
+export function memoryInfographicStatus(entryId: string) {
+  return getJSON<{ exists: boolean; generated_at: string | null }>(
+    `/memory/${encodeURIComponent(entryId)}/infographic`,
+  )
+}
+
+/** URL that serves a saved analysis's cached infographic (for the iframe `src`). */
+export function memoryInfographicViewUrl(entryId: string): string {
+  return `${API_BASE}/memory/${encodeURIComponent(entryId)}/infographic/view`
+}
+
+/** URL of the stored infographic HTML as-is (for copy / download). */
+export function memoryInfographicRawUrl(entryId: string): string {
+  return `${API_BASE}/memory/${encodeURIComponent(entryId)}/infographic/raw`
+}
+
+/** POST to (re)generate and persist a saved analysis's infographic; streams progress. */
+export async function streamMemoryInfographic(
+  entryId: string,
+  body: InfographicOptions,
+  handlers: MemoryInfographicHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  const started = await startSse(
+    `/memory/${encodeURIComponent(entryId)}/infographic`,
+    body,
+    signal,
+  )
+  if (started === null) return // aborted — stop silently
+  if (typeof started === 'string') {
+    handlers.onError?.(started)
+    return
+  }
+  await pumpSse(started, (parsed) => {
+    if (parsed.event === 'start') handlers.onStart?.(parsed.data.backend)
+    else if (parsed.event === 'delta') handlers.onDelta(parsed.data.text ?? '')
+    else if (parsed.event === 'done') handlers.onDone?.(parsed.data)
+    else if (parsed.event === 'error') handlers.onError?.(parsed.data.message ?? 'Infographic failed')
+  })
 }

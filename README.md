@@ -2,6 +2,8 @@
 
 Pull your workouts from Garmin Connect or Strava, store them as **faithful, lossless JSON**, and **analyze them with an LLM** — GitHub Copilot CLI or a local model (Ollama / LM Studio) — using your own prompt. Every analysis is saved to a **training-memory corpus** so the model can revisit past workouts and reason about your progress over time.
 
+> **Architecture & diagrams:** see [ARCHITECTURE.md](ARCHITECTURE.md) for how the poller, auto-analyzer, and web UI fit together as a local pipeline.
+
 ## What It Does
 
 **fit2json** is a command-line harness with three stages:
@@ -23,7 +25,11 @@ docker pull ghcr.io/kerem-ersoz/fit2json:latest
 docker run --rm ghcr.io/kerem-ersoz/fit2json --version
 ```
 
-> The Docker image covers `convert` and `fetch`. The `analyze` command's `copilot` backend needs the Copilot CLI on the host, so run analysis outside the container (or point `--base-url` at a reachable local LLM). See [Docker usage](#docker-usage).
+> The Docker image covers `convert`, `fetch`, and serving the **FitSift web UI**
+> (backend + frontend). The `analyze` command's `copilot` backend needs the Copilot CLI
+> on the host, so run analysis outside the container (or point `--base-url` at a reachable
+> local LLM). See [Docker usage](#docker-usage) and
+> [FitSift web UI in a container](#fitsift-web-ui-in-a-container-pull-and-run).
 
 ### Option 2: Install from source
 
@@ -285,11 +291,34 @@ fit2json convert run.fit | fit2json analyze -p "Race report"
 | `--recall {auto,same-sport,all,none}` | Which past analyses to recall as context (default: `auto`). |
 | `--recall-days INT` | Only recall memories within N days. |
 | `--recall-limit INT` | Max memories to recall (default: 8). |
+| `--profile PATH` | Athlete-profile JSON to personalize the analysis (default: `~/.fit2json/profile.json`). |
+| `--no-profile` | Ignore the saved athlete profile for this run. |
+| `--watch` | Watch a **directory** and analyze each *new* workout individually as it appears (built-in scheduler), skipping any already in memory. |
+| `--interval SECONDS` | Seconds between polls in `--watch` mode (default: 900). |
+| `--max-runs N` | In `--watch` mode, stop after N cycles (default: run until stopped). |
 
 **How backends handle data:**
 
 - **`copilot`** — the workout file(s) and the memory directory are passed **by path**; Copilot reads them with its own file tools, so even huge lossless files fit fine.
 - **`ollama` / `lmstudio` / `--base-url`** — the workout JSON is inlined and automatically **thinned** to fit `--max-chars`; recalled memories are added as a compact digest.
+
+**Personalization (the "You" profile):** if an athlete profile exists (height, weight, resting/max HR, LTHR, FTP, VO₂max, goals, …), a compact summary is injected into every analysis so the model can reason about your HR/power zones, calories, effort, and pacing. Edit it on the **You** tab of the web UI (`fit2json serve`), or point `--profile` at any profile JSON. Use `--no-profile` to opt out.
+
+**Auto-analyze new workouts (watch mode):** point `analyze --watch` at your library
+directory and it polls on the same built-in scheduler as `fetch --watch`, analyzing every
+*new* workout on its own and saving it to the memory corpus — so an analysis is ready
+shortly after a workout syncs. Already-analyzed workouts (matched by activity id in
+`index.jsonl`) are skipped, so re-runs are cheap.
+
+```bash
+# Pair with `fetch garmin --watch`: as new workouts land, analyze each and save to memory.
+fit2json analyze ~/.fit2json/library/json -p "Coach me on this workout." \
+  --backend copilot --memory ~/.fit2json/memory --watch --interval 900
+```
+
+`--watch` needs a **directory** SOURCE and the memory corpus (not `--no-memory`). It runs
+on the host (the `copilot` backend needs the Copilot CLI) and stops cleanly on
+Ctrl-C / SIGTERM — supervise it with launchd/systemd just like the poller.
 
 ### `fit2json memory`
 
@@ -379,6 +408,154 @@ docker run --rm --network host -v "$(pwd)":/data \
 ```
 
 > The `copilot` backend isn't available inside the image — run `fit2json analyze … --backend copilot` from a host install instead.
+
+---
+
+## FitSift web UI in a container (pull-and-run)
+
+Run the **backend + frontend together** from the published image, reading your local
+`~/.fit2json` data — no Python/Node toolchain needed. The image bundles the FastAPI API
+and the built React SPA and defaults to `serve` on port 8000. A helper script,
+`scripts/fitsift`, wraps `docker compose` so fetching the latest image and running it is
+one command.
+
+> **How it all fits together (with diagrams):** [ARCHITECTURE.md](ARCHITECTURE.md).
+
+### Prerequisites
+
+- Docker + Docker Compose v2.
+- Your data in `~/.fit2json` (the default layout): `library/json/` (workouts),
+  `memory/` (analyses), `profile.json`. The container mounts `~/.fit2json` at `/data`.
+- If the GHCR package is private, log in once so images can be pulled:
+  ```bash
+  echo "$(gh auth token)" | docker login ghcr.io -u kerem-ersoz --password-stdin
+  ```
+
+### Start it
+
+```bash
+# First run (builds the image from source — use until the web-capable image is on GHCR,
+# or whenever you want to run local changes):
+./scripts/fitsift up --build
+
+# Steady state — fetch the latest published image and (re)start:
+./scripts/fitsift update
+
+# → open http://localhost:8000
+```
+
+That's the automated pipeline: `update` pulls `ghcr.io/kerem-ersoz/fit2json:latest` and
+recreates the container. Schedule it (cron/launchd) or use the built-in Watchtower
+service (below) to keep the running UI on the latest image automatically.
+
+### Start the whole pipeline in one shot
+
+`up`/`update` run only the web UI. To bring up **everything** — the web UI, the Garmin
+poller, and the auto-analyzer — in one command:
+
+```bash
+./scripts/fitsift all     # UI + poller (containers) + analyzer (host)
+./scripts/fitsift stop    # stop all three
+./scripts/fitsift status  # show every component
+```
+
+Because analysis needs the Copilot CLI (which can't run in the container), the poller and
+UI run as **containers** while the analyzer runs as a **host** process (backgrounded, with
+a PID + log under `~/.fit2json`). Prerequisites for the full pipeline:
+
+- **Poller:** a seeded Garmin token cache (`~/.fit2json/garmintokens`) — do the one-time
+  login once (see [watch mode](#continuous-export-watch-mode)); add `GARMIN_EMAIL` /
+  `GARMIN_PASSWORD` to `.env` for token refresh.
+- **Analyzer:** the Copilot CLI on the host (or set `ANALYZE_BACKEND=ollama` + a running
+  server), and a host `fit2json` (this repo's `.venv`, a global install, or `FIT2JSON_BIN`).
+
+Tune the analyzer via env / `.env`: `ANALYZE_BACKEND`, `ANALYZE_MODEL`, `ANALYZE_EFFORT`,
+`ANALYZE_INTERVAL`, `ANALYZE_PROMPT`. On first start it backfills every workout not already
+in the memory corpus.
+
+### Local testing with Copilot (host mode)
+
+The container's web UI can't offer the **Copilot** backend, because the Copilot CLI is a
+host tool that can't run inside the Linux image (wrong OS/arch, and it needs an
+authenticated sign-in). For local testing where you want Copilot live in the Analyze
+picker, run everything as host processes instead:
+
+```bash
+./scripts/fitsift local     # web UI + Garmin poller + auto-analyzer, all on the host
+./scripts/fitsift status    # web / poller / analyzer + containers
+./scripts/fitsift stop      # stop everything
+```
+
+`local` is idempotent (per-service PID files + logs under `~/.fit2json`), serves the built
+SPA via `fit2json serve` where Copilot is on `PATH`, and starts the poller and
+auto-analyzer alongside it. It won't collide with the container stack: starting one stops
+the other's web service on port 8000. Tune it with `FITSIFT_PORT`, `POLL_INTERVAL`, and the
+`ANALYZE_*` knobs. The Garmin poller needs a valid token cache for this build; seed it once
+with `fit2json fetch garmin --days 1 --token-dir ~/.fit2json/garmintokens` (enter MFA if
+prompted), after which the poller resumes automatically.
+
+### Script commands
+
+| Command | What it does |
+|---------|--------------|
+| `./scripts/fitsift all` | **Start everything:** UI + poller (containers) + analyzer (host). |
+| `./scripts/fitsift stop` | Stop everything (containers + host analyzer). |
+| `./scripts/fitsift up [--build]` | Start just the web UI at http://localhost:8000. `--build` builds from local source. |
+| `./scripts/fitsift update` | Pull the latest image from GHCR, then restart the UI. |
+| `./scripts/fitsift restart` / `down` | Restart the UI / stop-and-remove all containers (+ host analyzer). |
+| `./scripts/fitsift logs [-f]` | Show (follow) web UI logs (or `logs analyzer`). |
+| `./scripts/fitsift status` | Status of every component (containers + analyzer). |
+| `./scripts/fitsift open` | Open the UI in your browser. |
+| `./scripts/fitsift poller [up\|down]` | Garmin poller container (keeps the library fresh). |
+| `./scripts/fitsift analyzer [up\|down]` | Host auto-analyzer — analyzes each new workout into memory. |
+| `./scripts/fitsift autoupdate [up\|down]` | Watchtower — auto-pulls new images. |
+
+### Configuration
+
+The compose stack reads these (all optional) from the environment or a repo-root `.env`:
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `FIT2JSON_HOME` | `~/.fit2json` | Host data dir mounted at `/data`. |
+| `FITSIFT_PORT` | `8000` | Host port for the UI. |
+| `POLL_INTERVAL` | `900` | Seconds between Garmin polls (poller service). |
+| `WATCH_INTERVAL` | `3600` | Seconds between image-update checks (autoupdate). |
+
+Reach it from your phone on the same Wi-Fi at `http://<your-laptop-ip>:8000` (the server
+already binds all interfaces).
+
+### Keeping data fresh + the analysis caveat
+
+- The optional **poller** service runs `fetch garmin --watch` in the container, writing
+  new workouts into the same `~/.fit2json/library/json` the UI reads. Seed the Garmin
+  token cache once on the host (see [watch mode](#continuous-export-watch-mode)), then:
+  ```bash
+  ./scripts/fitsift poller up      # needs GARMIN_EMAIL/GARMIN_PASSWORD in .env for refresh
+  ```
+- **Analysis generation runs on the host, not in the container** (the `copilot` backend
+  needs the Copilot CLI; `ollama`/`lmstudio` resolve to `localhost`). Close the loop with
+  the **auto-analyze watcher**, which watches the same library and writes analyses to
+  `~/.fit2json/memory` — which the containerized UI then shows in its Memory tab:
+  ```bash
+  fit2json analyze ~/.fit2json/library/json -p "Coach me on this workout." \
+    --backend copilot --memory ~/.fit2json/memory --watch --interval 900
+  ```
+  Full pipeline: **poller (container) → library → analyzer (host) → memory → UI (container)**,
+  all coupled only through the shared `~/.fit2json` directory.
+
+### Plain `docker run` (no compose)
+
+```bash
+docker run -d --name fitsift-web --restart unless-stopped \
+  -p 8000:8000 -v ~/.fit2json:/data \
+  ghcr.io/kerem-ersoz/fit2json:latest serve --host 0.0.0.0 --port 8000
+```
+
+### Publishing
+
+`.github/workflows/docker-publish.yml` builds this image (multi-arch, linux/amd64 +
+arm64) and pushes `ghcr.io/kerem-ersoz/fit2json:latest` on every push to `main`. Until
+this change lands there, `:latest` on GHCR is CLI-only — use `./scripts/fitsift up --build`.
 
 ---
 

@@ -16,9 +16,18 @@ body {
   @apply bg-slate-50 text-slate-900 antialiased;
 }
 
+.scrollbar-hidden {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}
+
 /* uPlot base styles (scoped tweaks live with the chart component). */
 .u-legend {
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
 }
 
 /* Reduced-motion: neutralize animations/transitions for users who ask for it. */

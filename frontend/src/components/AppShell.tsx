@@ -1,10 +1,13 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { clsx } from 'clsx'
-import { Brain, History, ListChecks, Upload, type LucideIcon } from 'lucide-react'
+import { Brain, ListChecks, MessageSquare, Upload, User, type LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { api } from '../lib/api'
 import { useUnits } from '../lib/units'
+import { ErrorBoundary } from './ErrorBoundary'
+import { useChat } from '../features/chat/ChatProvider'
+import { ChatDock } from '../features/chat/ChatDock'
 
 interface NavItem {
   to: string
@@ -16,8 +19,8 @@ interface NavItem {
 const NAV: NavItem[] = [
   { to: '/', label: 'Library', Icon: ListChecks, end: true },
   { to: '/analyze', label: 'Analyze', Icon: Brain },
-  { to: '/memory', label: 'Memory', Icon: History },
   { to: '/ingest', label: 'Add', Icon: Upload },
+  { to: '/you', label: 'You', Icon: User },
 ]
 
 function BrandMark({ compact = false }: { compact?: boolean }) {
@@ -60,9 +63,58 @@ function UnitsToggle() {
   )
 }
 
-export function AppShell({ children }: { children: ReactNode }) {
+/** Sidebar entry that opens the global chat pane. Not a route — it toggles the drawer. */
+function ChatSidebarButton() {
+  const { toggleOpen, open, messages } = useChat()
   return (
-    <div className="min-h-full lg:flex">
+    <button
+      type="button"
+      onClick={toggleOpen}
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      className={clsx(
+        'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
+        open ? 'bg-brand-50 text-brand-700' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
+      )}
+    >
+      <MessageSquare className="h-5 w-5" />
+      <span className="flex-1 text-left">Chat</span>
+      {messages.length > 0 && !open && (
+        <span className="h-1.5 w-1.5 rounded-full bg-brand-500" aria-hidden="true" />
+      )}
+    </button>
+  )
+}
+
+/** Compact chat toggle for the mobile top bar. */
+function ChatHeaderButton() {
+  const { toggleOpen, open, messages } = useChat()
+  return (
+    <button
+      type="button"
+      onClick={toggleOpen}
+      aria-label="Chat"
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      className="relative rounded-lg p-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+    >
+      <MessageSquare className="h-5 w-5" />
+      {messages.length > 0 && !open && (
+        <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-brand-500" aria-hidden="true" />
+      )}
+    </button>
+  )
+}
+
+export function AppShell({ children }: { children: ReactNode }) {
+  const location = useLocation()
+  const isAnalyze = location.pathname === '/analyze' || location.pathname === '/analyze/'
+  return (
+    <div
+      className={clsx(
+        isAnalyze ? 'flex h-dvh flex-col overflow-hidden lg:flex-row' : 'min-h-full lg:flex',
+      )}
+    >
       {/* Desktop sidebar */}
       <aside className="hidden w-64 shrink-0 flex-col border-r border-slate-200 bg-white lg:flex">
         <div className="px-5 py-5">
@@ -88,6 +140,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             </NavLink>
           ))}
         </nav>
+        {!isAnalyze && (
+          <div className="border-t border-slate-100 px-3 py-2">
+            <ChatSidebarButton />
+          </div>
+        )}
         <div className="space-y-3 px-5 py-4">
           <UnitsToggle />
           <div className="text-xs text-slate-400">Local · single-user</div>
@@ -97,13 +154,23 @@ export function AppShell({ children }: { children: ReactNode }) {
       {/* Mobile top bar */}
       <header className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur lg:hidden">
         <BrandMark compact />
-        <UnitsToggle />
+        <div className="flex items-center gap-2">
+          <UnitsToggle />
+          {!isAnalyze && <ChatHeaderButton />}
+        </div>
       </header>
 
       {/* Main content */}
-      <main className="min-w-0 flex-1">
-        <div className="mx-auto max-w-5xl px-4 pb-24 pt-4 sm:px-6 lg:px-8 lg:pb-10 lg:pt-8">
-          {children}
+      <main className={clsx('min-w-0 flex-1', isAnalyze && 'min-h-0')}>
+        <div
+          className={clsx(
+            'mx-auto px-4 sm:px-6 lg:px-8',
+            isAnalyze
+              ? 'flex h-full max-w-[90rem] flex-col overflow-hidden pb-[calc(4.5rem+env(safe-area-inset-bottom))] pt-4 lg:pb-6 lg:pt-6'
+              : 'max-w-5xl pb-24 pt-4 lg:pb-10 lg:pt-8',
+          )}
+        >
+          <ErrorBoundary resetKey={location.pathname}>{children}</ErrorBoundary>
         </div>
       </main>
 
@@ -129,6 +196,12 @@ export function AppShell({ children }: { children: ReactNode }) {
           </NavLink>
         ))}
       </nav>
+
+      {!isAnalyze && (
+        <ErrorBoundary compact label="The chat pane hit an error">
+          <ChatDock />
+        </ErrorBoundary>
+      )}
     </div>
   )
 }

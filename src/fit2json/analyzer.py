@@ -53,11 +53,95 @@ CHART_INSTRUCTIONS = (
     "Write the rest of your analysis as normal markdown around the chart(s)."
 )
 
+# ── Infographic pass (optional second prompt, web UI only) ──────────────────────
+# Takes a finished analysis and asks the model to re-render it as a single, visual,
+# self-contained HTML infographic so the athlete can scan it instead of reading prose.
+
+INFOGRAPHIC_SYSTEM_PROMPT = (
+    "You are a meticulous data-visualization designer. You are given either a finished workout "
+    "analysis or a chronological coaching conversation, and you turn the CURRENT conclusions "
+    "into a single, self-contained, responsive HTML infographic the athlete can scan.\n\n"
+    "SOURCE HANDLING:\n"
+    "- For a conversation, synthesize the latest state instead of replaying turns. Later coach "
+    "responses override earlier claims and corrections; never repeat a superseded number or "
+    "recommendation. Athlete messages provide intent and context, not verified facts.\n"
+    "- This is an executive visual summary, not a transcript or exhaustive dashboard. Keep only "
+    "the strongest evidence, current conclusions, and next actions. Omit implementation artifacts "
+    "such as chart specifications.\n"
+    "- Keep the result compact: 4–6 sections, at most 8 key metrics, at most one short comparison "
+    "table (6 rows maximum), and at most 3 next actions. Aim for roughly 900–1600px of desktop "
+    "height when the material allows; do not make the user scroll through a second report.\n\n"
+    "DESIGN LANGUAGE — match it exactly (this product is 'a quiet instrument': calm, precise, "
+    "data-forward; the data is the hero and the chrome recedes):\n"
+    "- Surface #ffffff. Text: #0f172a for headings, #475569 for body, #64748b for muted labels. "
+    "Structure with hairline 1px borders (#e2e8f0) and generous whitespace — NOT with color.\n"
+    "- Use a restrained semantic data palette, not monochrome and not decorative color: Signal "
+    "Green #059669 (deep #047857, tint #ecfdf5) means current, improved, desired, or the primary "
+    "finding; Slate #64748b (light #cbd5e1, tint #f8fafc) means baseline, historical, or neutral; "
+    "Caution Amber #d97706 (deep #92400e, tint #fffbeb) means overload, imbalance, or warning only.\n"
+    "- In every comparison visual, assign those roles consistently: baseline in slate, current or "
+    "target in green, and a genuinely risky value in amber. Keep the text label and value visible "
+    "so color is never the only cue. Use light role tints for at most one key surface per section; "
+    "saturated color should remain under roughly 10% of the page. Add `baseline`, `current`, or "
+    "`caution` to every bar-fill class so the runtime can preserve those semantics.\n"
+    "- Flat. No drop shadows, no gradients, no gradient text, no glow. No tracked-uppercase "
+    "eyebrow labels. No emoji. Rounded corners 8-12px on cards.\n"
+    "- Font: the system stack "
+    "font-family:Inter,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif.\n\n"
+    "STRUCTURE (adapt to the content — omit sections the analysis doesn't support):\n"
+    "- A short headline and one-sentence takeaway. No kicker or eyebrow above it.\n"
+    "- One compact key-metrics readout; avoid a repeated grid of identical cards.\n"
+    "- CSS-only visuals where they add clarity: horizontal bar meters for zone / effort / time "
+    "distribution, labeled progress bars, simple side-by-side comparison bars. Build every chart "
+    "from plain <div>s with inline widths/percentages. Bar markup is strict: use a block-level "
+    "track with a fixed height and overflow:hidden, then a direct block-level fill child with "
+    "height:100% and a width between 0% and 100%. Never use an inline <span> as a fill. For a "
+    "comparison, normalize every bar against the same stated maximum so lengths are comparable.\n"
+    "- Give the primary metric or conclusion a pale green tint, and use a pale amber tint only "
+    "around a real caution. Do not leave every metric, table, callout, and chart on identical white.\n"
+    "- Compact callout cards for the key insights, and a short 'what to do next' list if the "
+    "analysis implies next steps.\n\n"
+    "HARD RULES:\n"
+    "- Output ONE complete, valid HTML document beginning with <!doctype html>. Put ALL CSS in a "
+    "single <style> in <head>. Use only inline/embedded CSS — no frameworks.\n"
+    "- No JavaScript. No <img>, <svg> external refs, <iframe>, remote URLs, @import, or web fonts. "
+    "It must render fully offline.\n"
+    "- Use ONLY numbers and facts present in the provided analysis. Never invent data; if a value "
+    "isn't stated, leave it out.\n"
+    "- Accessible: body text contrast >=4.5:1 on white. Fluid layout that works from ~360px to "
+    "~900px wide (use flex-wrap / min-width, not fixed pixel columns).\n"
+    "- Respond with ONLY the HTML — no markdown, no code fences, no commentary before or after."
+)
+
+# Copilot's agentic prompt normally ends by asking for markdown to stdout; the infographic
+# pass overrides that trailer so the CLI emits raw HTML and never touches files.
+INFOGRAPHIC_FINAL_INSTRUCTION = (
+    "Output ONLY the complete HTML document (starting with <!doctype html>) to stdout. "
+    "Do not modify any files."
+)
+
+
+def build_infographic_user_prompt(analysis: str) -> str:
+    """The user message for the infographic pass: an analysis or conversation to visualize."""
+    return (
+        "Turn the following source into a compact HTML infographic, following your design rules. "
+        "Ground every number in this text, do not add data that isn't here, and apply any later "
+        "corrections before deciding what to show.\n\n"
+        "===== SOURCE =====\n"
+        f"{analysis.strip()}\n"
+        "===== END SOURCE =====\n\n"
+        "Produce the complete HTML document now."
+    )
+
+
 # Local OpenAI-compatible backends: (base_url, default api key)
 LOCAL_BACKENDS = {
     "ollama": ("http://localhost:11434/v1", "ollama"),
     "lmstudio": ("http://localhost:1234/v1", "lm-studio"),
 }
+
+# FitSift exposes these as explicit long-context presets in the model selector.
+COPILOT_LONG_CONTEXT_MODELS = ("gpt-5.6-sol", "claude-opus-5")
 
 
 def copilot_available() -> bool:
@@ -111,8 +195,13 @@ def _build_copilot_prompt(
     workout_paths: List[Path],
     memory_dir: Optional[Path],
     library_dir: Optional[Path] = None,
+    athlete_profile: Optional[str] = None,
+    system_prompt: Optional[str] = None,
+    final_instruction: Optional[str] = None,
 ) -> str:
-    lines = [SYSTEM_PROMPT, ""]
+    lines = [system_prompt or SYSTEM_PROMPT, ""]
+    if athlete_profile:
+        lines += [athlete_profile, ""]
     if workout_paths:
         lines.append("Workout data to analyze (lossless FIT JSON), read these files:")
         lines += [f"  - {p}" for p in workout_paths]
@@ -134,7 +223,7 @@ def _build_copilot_prompt(
         lines.append("")
     lines.append(f"Athlete's request:\n{prompt}")
     lines.append("")
-    lines.append("Write the analysis to stdout as markdown. Do not modify any files.")
+    lines.append(final_instruction or "Write the analysis to stdout as markdown. Do not modify any files.")
     return "\n".join(lines)
 
 
@@ -146,6 +235,7 @@ def run_copilot(
     stream: bool = True,
     silent: bool = True,
     reasoning_effort: Optional[str] = None,
+    athlete_profile: Optional[str] = None,
 ) -> str:
     """Run analysis via the GitHub Copilot CLI subprocess.
 
@@ -154,7 +244,13 @@ def run_copilot(
     """
     chunks: List[str] = []
     for chunk in stream_copilot(
-        prompt, workout_paths, memory_dir, model, silent=silent, reasoning_effort=reasoning_effort
+        prompt,
+        workout_paths,
+        memory_dir,
+        model,
+        silent=silent,
+        reasoning_effort=reasoning_effort,
+        athlete_profile=athlete_profile,
     ):
         chunks.append(chunk)
         if stream:
@@ -171,6 +267,9 @@ def stream_copilot(
     silent: bool = True,
     reasoning_effort: Optional[str] = None,
     library_dir: Optional[Path] = None,
+    athlete_profile: Optional[str] = None,
+    system_prompt: Optional[str] = None,
+    final_instruction: Optional[str] = None,
 ) -> Iterator[str]:
     """Yield analysis text chunks from the GitHub Copilot CLI subprocess.
 
@@ -181,6 +280,9 @@ def stream_copilot(
     agent response — no tool-call trace or stats footer. Used by the web UI so saved
     analyses are clean prose + charts. ``library_dir`` grants the agent access to the
     whole workout library so it can find relevant workouts itself (freeform mode).
+
+    ``system_prompt``/``final_instruction`` override the default coach persona and the
+    "write markdown to stdout" trailer — used by the infographic pass to request raw HTML.
 
     ``--model`` is only passed when ``model`` is given, so an unset model falls back to
     the user's *configured* Copilot default (e.g. Opus). Forcing ``--model auto`` here
@@ -201,7 +303,10 @@ def stream_copilot(
             "--reasoning-effort."
         )
 
-    full_prompt = _build_copilot_prompt(prompt, workout_paths, memory_dir, library_dir)
+    full_prompt = _build_copilot_prompt(
+        prompt, workout_paths, memory_dir, library_dir, athlete_profile,
+        system_prompt=system_prompt, final_instruction=final_instruction,
+    )
 
     cmd = [
         "copilot",
@@ -212,6 +317,8 @@ def stream_copilot(
     ]
     if model:
         cmd += ["--model", model]
+        if model.strip().lower() in COPILOT_LONG_CONTEXT_MODELS:
+            cmd += ["--context", "long_context"]
     if silent:
         cmd.append("--silent")
     if reasoning_effort:
@@ -263,20 +370,25 @@ def _build_openai_messages(
     workout_json: str,
     memory_digest: Optional[str],
     max_chars: int,
+    athlete_profile: Optional[str] = None,
+    system_prompt: Optional[str] = None,
 ) -> "List[ChatCompletionMessageParam]":
     """Build the system+user chat messages, compacting the workout JSON to fit."""
     workout_json = compact_workout_json(workout_json, max_chars)
 
     user_parts = []
+    if athlete_profile:
+        user_parts.append(athlete_profile)
     if memory_digest:
         user_parts.append(
             "Prior workout analyses (memory, for trend context):\n" + memory_digest
         )
-    user_parts.append("Workout data (lossless FIT JSON):\n```json\n" + workout_json + "\n```")
+    if workout_json:
+        user_parts.append("Workout data (lossless FIT JSON):\n```json\n" + workout_json + "\n```")
     user_parts.append("Athlete's request:\n" + prompt)
 
     messages: "List[ChatCompletionMessageParam]" = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt or SYSTEM_PROMPT},
         {"role": "user", "content": "\n\n".join(user_parts)},
     ]
     return messages
@@ -290,11 +402,15 @@ def stream_openai_compatible(
     memory_digest: Optional[str] = None,
     model: Optional[str] = None,
     max_chars: int = 200_000,
+    athlete_profile: Optional[str] = None,
+    system_prompt: Optional[str] = None,
 ) -> Iterator[str]:
     """Yield analysis text chunks from an OpenAI-compatible chat endpoint."""
     client = _make_client(base_url, api_key)
     resolved_model = model or _first_available_model(client) or "local-model"
-    messages = _build_openai_messages(prompt, workout_json, memory_digest, max_chars)
+    messages = _build_openai_messages(
+        prompt, workout_json, memory_digest, max_chars, athlete_profile, system_prompt
+    )
 
     resp = client.chat.completions.create(model=resolved_model, messages=messages, stream=True)
     for event in resp:
@@ -312,12 +428,13 @@ def run_openai_compatible(
     model: Optional[str] = None,
     stream: bool = True,
     max_chars: int = 200_000,
+    athlete_profile: Optional[str] = None,
 ) -> str:
     """Run analysis against a local/remote OpenAI-compatible chat endpoint."""
     if stream:
         collected: List[str] = []
         for delta in stream_openai_compatible(
-            prompt, workout_json, base_url, api_key, memory_digest, model, max_chars
+            prompt, workout_json, base_url, api_key, memory_digest, model, max_chars, athlete_profile
         ):
             collected.append(delta)
             sys.stdout.write(delta)
@@ -327,7 +444,7 @@ def run_openai_compatible(
 
     client = _make_client(base_url, api_key)
     resolved_model = model or _first_available_model(client) or "local-model"
-    messages = _build_openai_messages(prompt, workout_json, memory_digest, max_chars)
+    messages = _build_openai_messages(prompt, workout_json, memory_digest, max_chars, athlete_profile)
     resp = client.chat.completions.create(model=resolved_model, messages=messages)
     text = resp.choices[0].message.content or ""
     sys.stdout.write(text + "\n")

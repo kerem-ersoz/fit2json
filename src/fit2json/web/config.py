@@ -6,6 +6,8 @@ Env vars (all optional):
   FITSIFT_FRONTEND_DIST  Path to the built SPA (frontend/dist) to serve alongside the API.
   FITSIFT_CORS_ORIGINS   Comma-separated allowed origins (default "*", fine for local use).
   FITSIFT_BASE_PATH      Base path the app is mounted under (default "/"; e.g. "/fitsift" later).
+  FITSIFT_PROFILE        Athlete-profile JSON file (default ~/.fit2json/profile.json).
+  FITSIFT_CHATS          Persisted chat-session dir (default ~/.fit2json/chats).
 """
 
 from __future__ import annotations
@@ -17,7 +19,9 @@ from typing import List, Optional
 
 from dotenv import load_dotenv
 
+from fit2json.chats import DEFAULT_CHATS_DIR
 from fit2json.memory import DEFAULT_MEMORY_DIR
+from fit2json.profile import default_profile_path
 from fit2json.web import BRAND_NAME, BRAND_TAGLINE
 
 load_dotenv()
@@ -33,6 +37,8 @@ class Settings:
     memory_dir: Path
     frontend_dist: Optional[Path]
     cors_origins: List[str]
+    profile_path: Path
+    chats_dir: Path
     base_path: str = "/"
     brand_name: str = BRAND_NAME
     brand_tagline: str = BRAND_TAGLINE
@@ -45,11 +51,15 @@ def get_settings() -> Settings:
     dist = os.environ.get("FITSIFT_FRONTEND_DIST")
     origins = os.environ.get("FITSIFT_CORS_ORIGINS")
     base = os.environ.get("FITSIFT_BASE_PATH", "/") or "/"
+    profile = os.environ.get("FITSIFT_PROFILE")
+    chats = os.environ.get("FITSIFT_CHATS")
 
     return Settings(
         library_dir=Path(lib).expanduser() if lib else _default_library(),
         memory_dir=Path(mem).expanduser() if mem else Path(DEFAULT_MEMORY_DIR),
         frontend_dist=Path(dist).expanduser() if dist else None,
         cors_origins=[o.strip() for o in origins.split(",") if o.strip()] if origins else ["*"],
+        profile_path=Path(profile).expanduser() if profile else default_profile_path(),
+        chats_dir=Path(chats).expanduser() if chats else Path(DEFAULT_CHATS_DIR).expanduser(),
         base_path=base if base.startswith("/") else f"/{base}",
     )

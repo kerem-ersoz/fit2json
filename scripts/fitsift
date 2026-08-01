@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+#
+# FitSift control script.
+#
+# Two ways to run the FitSift web UI + pipeline:
+#   * `local` — everything as host processes (the Copilot CLI is available in the UI).
+#     Best for local testing. Managed with per-service PID files under ~/.fit2json.
+#   * container stack — web UI + poller from the fit2json image via docker compose.
+#
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+COMPOSE=(docker compose)
+PORT="${FITSIFT_PORT:-8000}"
+URL="http://localhost:${PORT}"
+
+# Shared data dir. Exported so `docker compose` interpolation and the host processes
+# all resolve to the same location.
+FIT2JSON_HOME="${FIT2JSON_HOME:-$HOME/.fit2json}"
+export FIT2JSON_HOME
+LIB="$FIT2JSON_HOME/library/json"
+RAW="$FIT2JSON_HOME/library/fit"
+MEM="$FIT2JSON_HOME/memory"
+LOGDIR="$FIT2JSON_HOME/logs"
+
+# Knobs (override via env or .env).
+POLL_INTERVAL="${POLL_INTERVAL:-900}"
+ANALYZE_BACKEND="${ANALYZE_BACKEND:-copilot}"
+ANALYZE_INTERVAL="${ANALYZE_INTERVAL:-900}"
+ANALYZE_PROMPT="${ANALYZE_PROMPT:-Coach me on this workout: pacing, HR/power zones, effort distribution, execution, and how it fits my recent training.}"
+
+open_url() { command -v open >/dev/null 2>&1 && open "$URL" || { command -v xdg-open >/dev/null 2>&1 && xdg-open "$URL"; } || echo "Open $URL"; }
+
+# Resolve a host `fit2json` binary: explicit override, then this repo's venv, then PATH.
+_fit2json_bin() {
+  if [ -n "${FIT2JSON_BIN:-}" ]; then echo "$FIT2JSON_BIN"; return 0; fi
+  if [ -x "$REPO_ROOT/.venv/bin/fit2json" ]; then echo "$REPO_ROOT/.venv/bin/fit2json"; return 0; fi
+  command -v fit2json 2>/dev/null || true
+}
+_ensure_bin() {
+  local bin; bin="$(_fit2json_bin)"
+  if [ -z "$bin" ]; then
+    echo "fit2json not found. Create the venv (python3 -m venv .venv && .venv/bin/pip install -e '.[web]') or set FIT2JSON_BIN." >&2
+    return 1
+  fi
+  echo "$bin"
+}
+_ensure_dist() {
+  [ -f "$REPO_ROOT/frontend/dist/index.html" ] && return 0
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "  frontend/dist is missing and 'npm' was not found on PATH." >&2
+    echo "  Install Node 18+ and npm, then re-run (or build frontend/dist and copy it in)." >&2
+    return 1
+  fi
+  echo "  building frontend SPA in $REPO_ROOT/frontend (dist missing) ..."
+  (
+    cd "$REPO_ROOT/frontend" || exit 1
+    if [ ! -d node_modules ]; then echo "  installing frontend deps (npm ci) ..."; npm ci || npm install || exit 1; fi
+    npm run build
+  ) || { echo "  frontend build failed; try manually: (cd \"$REPO_ROOT/frontend\" && npm ci && npm run build)" >&2; return 1; }
+}
+
+# ── generic host-process supervisor (one PID file + log per service) ──────────
+_pidfile()      { echo "$FIT2JSON_HOME/$1.pid"; }
+_host_running() { local pf; pf="$(_pidfile "$1")"; [ -f "$pf" ] && kill -0 "$(cat "$pf" 2>/dev/null || echo 0)" 2>/dev/null; }
+_host_up() {  # _host_up <name> <cmd...>
+  local name="$1"; shift
+  if _host_running "$name"; then echo "  ${name}: already running (pid $(cat "$(_pidfile "$name")"))"; return 0; fi
+  mkdir -p "$LOGDIR"
+  nohup "$@" >>"$LOGDIR/${name}.log" 2>&1 &
+  echo $! >"$(_pidfile "$name")"
+  echo "  ${name}: started (pid $(cat "$(_pidfile "$name")")) -> $LOGDIR/${name}.log"
+}
+_host_down() {  # _host_down <name>
+  local name="$1" pf; pf="$(_pidfile "$name")"
+  if _host_running "$name"; then kill "$(cat "$pf")" 2>/dev/null || true; echo "  ${name}: stopped"; fi
+  rm -f "$pf"
+}
+
+# ── host services (Copilot-capable: they run where the Copilot CLI lives) ─────
+web_up() {
+  local bin; bin="$(_ensure_bin)" || return 1
+  # Never let the container web hold :8000 (IPv4/IPv6 split-brain with a host serve).
+  "${COMPOSE[@]}" stop fitsift >/dev/null 2>&1 || true
+  _ensure_dist || return 1
+  mkdir -p "$LIB" "$MEM"
+  _host_up web "$bin" serve --host 127.0.0.1 --port "$PORT" \
+    --library "$LIB" --memory "$MEM" --frontend "$REPO_ROOT/frontend/dist"
+}
+poller_up() {
+  local bin; bin="$(_ensure_bin)" || return 1
+  mkdir -p "$LIB" "$RAW"
+  _host_up poller "$bin" fetch garmin --watch --interval "$POLL_INTERVAL" \
+    -o "$LIB" --raw-dir "$RAW" --token-dir "$FIT2JSON_HOME/garmintokens"
+}
+analyzer_up() {
+  local bin; bin="$(_ensure_bin)" || return 1
+  mkdir -p "$LIB" "$MEM"
+  local args=(analyze "$LIB" -p "$ANALYZE_PROMPT" --backend "$ANALYZE_BACKEND"
+              --memory "$MEM" --watch --interval "$ANALYZE_INTERVAL")
+  [ -n "${ANALYZE_MODEL:-}" ] && args+=(--model "$ANALYZE_MODEL")
+  [ -n "${ANALYZE_EFFORT:-}" ] && args+=(--reasoning-effort "$ANALYZE_EFFORT")
+  _host_up analyzer "$bin" "${args[@]}"
+}
+
+usage() {
+  cat <<EOF
+FitSift — run the local pipeline (host) or the container stack.
+
+Usage: scripts/fitsift <command> [options]
+
+Local (host processes, Copilot-enabled) — recommended for local testing:
+  local             Turnkey: start web UI + Garmin poller + auto-analyzer, all on the host
+                    so the Copilot CLI shows up in the Analyze picker. Idempotent.
+  stop              Stop everything (host services + containers).
+  status            Status of host services and containers.
+  logs <web|poller|analyzer>   Follow a host service log (or 'logs -f' for the container).
+  web [up|down]     Host web UI only (fit2json serve, Copilot-enabled).
+  analyzer [up|down|logs]      Host auto-analyzer only.
+  open              Open the UI in your browser.
+
+Container stack (image from GHCR; the web UI has NO Copilot in the picker):
+  up [--build]      Web UI container only.        update   Pull latest image + restart it.
+  all               Web UI + poller (containers) + analyzer (host).
+  poller [up|down]  Garmin poller container.       autoupdate [up|down]   Watchtower.
+  restart | build | shell
+
+Data dir: ${FIT2JSON_HOME}
+Knobs (env or .env): FITSIFT_PORT, POLL_INTERVAL, ANALYZE_BACKEND, ANALYZE_MODEL,
+ANALYZE_EFFORT, ANALYZE_INTERVAL, ANALYZE_PROMPT, FIT2JSON_BIN.
+EOF
+}
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  # ── turnkey: everything on the host, Copilot preserved ──────────────────────
+  local)
+    echo "Starting local FitSift stack (host processes, Copilot-enabled) ..."
+    # Avoid conflicts with the container stack (port collision + double polling).
+    "${COMPOSE[@]}" stop fitsift poller >/dev/null 2>&1 || true
+    web_up || true
+    poller_up || true
+    analyzer_up || true
+    sleep 3
+    echo
+    echo "Local stack:"
+    if curl -sf "http://localhost:${PORT}/api/health" >/dev/null 2>&1; then
+      cop=$(curl -s "http://localhost:${PORT}/api/config" | grep -o '"copilot":[a-z]*' | cut -d: -f2)
+      echo "  web      -> ${URL}   (healthy; copilot backend: ${cop:-unknown})"
+    else
+      echo "  web      -> not responding yet (see $LOGDIR/web.log)"
+    fi
+    _host_running poller   && echo "  poller   -> fetch garmin --watch (every ${POLL_INTERVAL}s)" || echo "  poller   -> not running (see $LOGDIR/poller.log)"
+    _host_running analyzer && echo "  analyzer -> analyze --watch -> ${MEM}"                        || echo "  analyzer -> not running (see $LOGDIR/analyzer.log)"
+    ;;
+
+  # ── universal stop / status / logs (host + containers) ──────────────────────
+  stop|down)
+    _host_down web
+    _host_down poller
+    _host_down analyzer
+    "${COMPOSE[@]}" --profile poller --profile autoupdate down >/dev/null 2>&1 || true
+    echo "Stopped host services and containers."
+    ;;
+  status)
+    echo "Host services:"
+    for s in web poller analyzer; do
+      if _host_running "$s"; then echo "  ${s}: up (pid $(cat "$(_pidfile "$s")"))"; else echo "  ${s}: down"; fi
+    done
+    echo "Containers:"
+    "${COMPOSE[@]}" ps 2>/dev/null || echo "  (docker not available)"
+    ;;
+  logs)
+    case "${1:-}" in
+      web|poller|analyzer) tail -n 100 -f "$LOGDIR/${1}.log" ;;
+      "") "${COMPOSE[@]}" logs fitsift ;;
+      *)  "${COMPOSE[@]}" logs "$@" fitsift ;;
+    esac
+    ;;
+  open) open_url ;;
+
+  # ── granular host services ──────────────────────────────────────────────────
+  web)
+    case "${1:-up}" in
+      up) web_up ; echo "  web -> ${URL}" ;;
+      down) _host_down web ;;
+      logs) tail -n 100 -f "$LOGDIR/web.log" ;;
+      *) echo "usage: scripts/fitsift web [up|down|logs]"; exit 1 ;;
+    esac
+    ;;
+  analyzer)
+    case "${1:-up}" in
+      up) analyzer_up ;;
+      down) _host_down analyzer ;;
+      logs) tail -n 100 -f "$LOGDIR/analyzer.log" ;;
+      *) echo "usage: scripts/fitsift analyzer [up|down|logs]"; exit 1 ;;
+    esac
+    ;;
+
+  # ── container stack (image from GHCR; web UI has no Copilot) ─────────────────
+  up)
+    _host_down web >/dev/null 2>&1 || true
+    if [[ "${1:-}" == "--build" ]]; then "${COMPOSE[@]}" up -d --build fitsift; else "${COMPOSE[@]}" up -d fitsift; fi
+    echo "FitSift UI (container) -> ${URL}"
+    ;;
+  update)
+    "${COMPOSE[@]}" pull fitsift
+    "${COMPOSE[@]}" up -d fitsift
+    echo "FitSift UI (container) -> ${URL}"
+    ;;
+  restart) "${COMPOSE[@]}" restart fitsift ;;
+  all)
+    _host_down web >/dev/null 2>&1 || true
+    "${COMPOSE[@]}" --profile poller up -d
+    analyzer_up || true
+    echo
+    echo "Container pipeline up:"
+    echo "  UI       -> ${URL} (container; no Copilot in the picker)"
+    echo "  Poller   -> container fitsift-poller"
+    _host_running analyzer && echo "  Analyzer -> host pid $(cat "$(_pidfile analyzer)")" || echo "  Analyzer -> NOT running"
+    ;;
+  build)   "${COMPOSE[@]}" build ;;
+  shell)   "${COMPOSE[@]}" run --rm --entrypoint /bin/sh fitsift ;;
+  poller)
+    case "${1:-up}" in
+      up)   "${COMPOSE[@]}" --profile poller up -d poller; echo "Garmin poller (container) started." ;;
+      down) "${COMPOSE[@]}" rm -sf poller ;;
+      *)    echo "usage: scripts/fitsift poller [up|down]"; exit 1 ;;
+    esac
+    ;;
+  autoupdate)
+    case "${1:-up}" in
+      up)   "${COMPOSE[@]}" --profile autoupdate up -d watchtower; echo "Watchtower started (auto-updates on new GHCR images)." ;;
+      down) "${COMPOSE[@]}" rm -sf watchtower ;;
+      *)    echo "usage: scripts/fitsift autoupdate [up|down]"; exit 1 ;;
+    esac
+    ;;
+  help|-h|--help) usage ;;
+  *) echo "Unknown command: $cmd"; echo; usage; exit 1 ;;
+esac

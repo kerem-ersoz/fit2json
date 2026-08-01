@@ -1,0 +1,71 @@
+# FitSift — run the web UI (FastAPI backend + bundled React frontend) from the
+# fit2json container image. Driven by ./scripts/fitsift (see README).
+#
+#   ./scripts/fitsift up --build   # first run / run local source
+#   ./scripts/fitsift update       # pull latest image from GHCR + restart
+#
+# Data lives in ${FIT2JSON_HOME:-$HOME/.fit2json}, mounted at /data.
+name: fitsift
+
+services:
+  # Backend + frontend served together on one port.
+  fitsift:
+    image: ghcr.io/kerem-ersoz/fit2json:latest
+    build:
+      context: .
+    container_name: fitsift-web
+    command: ["serve", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "${FITSIFT_PORT:-8000}:8000"
+    volumes:
+      - "${FIT2JSON_HOME:-${HOME}/.fit2json}:/data"
+    environment:
+      # Point the web app at the mounted library / memory / profile.
+      FITSIFT_LIBRARY: /data/library/json
+      FITSIFT_MEMORY: /data/memory
+      FITSIFT_CHATS: /data/chats
+      FITSIFT_PROFILE: /data/profile.json
+      FITSIFT_CORS_ORIGINS: "*"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health').getcode()==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    restart: unless-stopped
+
+  # Optional: continuously pull new Garmin activities into the same library the UI
+  # reads, so analyses/data are fresh. Enable with:  ./scripts/fitsift poller up
+  # Requires a seeded Garmin token cache (~/.fit2json/garmintokens) and, for token
+  # refresh, GARMIN_EMAIL / GARMIN_PASSWORD in .env.
+  poller:
+    image: ghcr.io/kerem-ersoz/fit2json:latest
+    build:
+      context: .
+    container_name: fitsift-poller
+    profiles: ["poller"]
+    command: ["fetch", "garmin", "--watch", "--interval", "${POLL_INTERVAL:-900}",
+              "-o", "/data/library/json", "--raw-dir", "/data/library/fit"]
+    volumes:
+      - "${FIT2JSON_HOME:-${HOME}/.fit2json}:/data"
+    environment:
+      GARMINTOKENS: /data/garmintokens
+      GARMIN_EMAIL: "${GARMIN_EMAIL:-}"
+      GARMIN_PASSWORD: "${GARMIN_PASSWORD:-}"
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    restart: unless-stopped
+
+  # Optional: auto-update the running containers whenever a new image is published
+  # to GHCR. Only touches containers labelled above. Enable with:
+  #   ./scripts/fitsift autoupdate up
+  watchtower:
+    image: containrrr/watchtower
+    container_name: fitsift-watchtower
+    profiles: ["autoupdate"]
+    command: --interval ${WATCH_INTERVAL:-3600} --cleanup --label-enable
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
