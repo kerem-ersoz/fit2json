@@ -96,7 +96,8 @@ npm run build
 This repository owns production deployment through
 `.github/workflows/github-pages.yml`. On relevant pushes to `main` (or manual dispatch),
 the workflow builds the SPA and deploys `frontend/dist` as an ephemeral Pages artifact.
-Built files are not committed.
+Built files are not committed. The active tailnet API is configured through the
+repository Actions variable `VITE_API_BASE_URL`.
 
 The repository slug `fitsift` makes GitHub Pages mount this project site automatically
 at `/fitsift/` beneath the account-level `www.ker.ooo` custom domain. The workflow copies
