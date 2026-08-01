@@ -93,14 +93,15 @@ VITE_API_BASE_URL=https://computer.example.ts.net/api \
 npm run build
 ```
 
-The `kerem-ersoz/kerem-ersoz.github.io` repository owns production deployment. Its
-`Deploy site and FitSift to Pages` workflow checks out this repository, builds the SPA,
-assembles it under `/fitsift/`, and deploys one ephemeral Pages artifact. Built files are
-not committed to either repository.
+This repository owns production deployment through
+`.github/workflows/github-pages.yml`. On relevant pushes to `main` (or manual dispatch),
+the workflow builds the SPA and deploys `frontend/dist` as an ephemeral Pages artifact.
+Built files are not committed.
 
-GitHub Pages has no server-side SPA rewrite. The Pages assembly includes a redirect
-limited to `/fitsift/*` so direct navigation and refreshes recover the React Router path
-without changing the homepage's general 404 behavior.
+The repository slug `fitsift` makes GitHub Pages mount this project site automatically
+at `/fitsift/` beneath the account-level `www.ker.ooo` custom domain. The workflow copies
+`index.html` to `404.html`, matching the Brolonist deployment pattern so BrowserRouter
+can recover direct client-route navigation.
 
 ### 3. Restrict the API origin
 

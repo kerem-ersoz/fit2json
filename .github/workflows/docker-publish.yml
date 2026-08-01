@@ -9,7 +9,8 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # Preserve the published CLI image name after the repository rename to FitSift.
+  IMAGE_NAME: ${{ github.repository_owner }}/fit2json
 
 jobs:
   test:

@@ -36,7 +36,7 @@ docker run --rm ghcr.io/kerem-ersoz/fit2json --version
 Requires **Python 3.9+**.
 
 ```bash
-git clone https://github.com/kerem-ersoz/fit2json.git
+git clone https://github.com/kerem-ersoz/fitsift.git
 cd fit2json
 python3 -m venv .venv
 source .venv/bin/activate
