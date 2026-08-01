@@ -48,19 +48,10 @@ export function LibraryPage() {
   // Hero, trend, and date grouping only make sense in the default newest-first, unfiltered view.
   const showFeatured = !isFiltering && sort === 'date'
 
-  const subtitle = !data
-    ? 'Your workouts'
-    : isFiltering
-      ? `${filtered.length} of ${data.length} workout${data.length === 1 ? '' : 's'}`
-      : `${data.length} workout${data.length === 1 ? '' : 's'}`
-
   return (
     <div>
-      <div className="mb-4 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Library</h1>
-          <p className="text-sm text-slate-500">{subtitle}</p>
-        </div>
+      <h1 className="sr-only">Library</h1>
+      <div className="mb-4 sm:mb-6">
         <WorkoutControls
           search={search}
           onSearch={(v) => setParam('q', v, '')}

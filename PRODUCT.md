@@ -1,80 +1,113 @@
 # Product
 
-## Register
+<!-- impeccable:product-schema 1 -->
 
-product
+## Platform
+
+web
 
 ## Users
 
-Data-literate endurance athletes — runners, cyclists, triathletes — who want to make sense of
-their *own* training and keep it private. They value data ownership and calm over social feeds
-and engagement mechanics. FitSift is **local-first**: the workout library and training memory
-live in a local database the athlete owns, and analysis runs on the model of their choice —
-fully local, or their own cloud key. A one-time import seeds history; after that it stays in
-sync in the background (no CLI required).
+FitSift primarily serves data-literate endurance athletes — runners, cyclists,
+and triathletes — who want deep insight into their own complete training history
+without giving up data ownership or privacy.
 
-**Also served:** coaches who follow several athletes' training over time — the paid,
-multi-athlete tier.
+They browse their workout library, inspect an activity in depth, ask coaching
+questions across one or many workouts, and revisit saved conversations and
+analysis memory to understand progress over time. They use FitSift on a phone
+soon after training and on a desktop for longer review sessions.
 
-Their job: make sense of their training. They open FitSift to browse their
-workout library, inspect a single activity in depth (splits, HR, map, charts),
-run an LLM analysis against a custom prompt, and revisit a growing "training
-memory" corpus to reason about progress over time. Context is split between
-**phone** (right after a workout, on the go) and **desktop** (longer, focused
-review sessions).
+A paid multi-athlete tier for coaches is planned, not currently implemented.
 
 ## Product Purpose
 
-fit2json turns raw workout files into faithful, **lossless** data; FitSift is the
-calm reading room for that data. It exists to convert a pile of `.fit` files and
-API pulls into **durable insight** — one workout understood at a glance, and
-long-term trends surfaced through accumulated analysis.
+fit2json turns raw workout files and provider exports into faithful, lossless
+data. FitSift is the private reading and analysis surface for that archive. The
+product exists to turn workouts into durable insight: understand one session
+quickly, then see how it fits the larger arc of training.
 
-Success looks like: the athlete quickly grasps what a single session was, then
-just as quickly sees how it fits the larger arc of their training — without ads,
-noise, engagement mechanics, or social pressure. The interface earns trust by
-being accurate, legible, and quiet.
+Success means an athlete can trust the stored record, grasp a workout at a
+glance, and get useful longitudinal coaching without ads, social pressure, or
+engagement mechanics.
 
-## Brand Personality
+## Positioning
 
-Calm, precise, data-forward. Quiet confidence rather than hype. The chrome
-recedes so the data is the hero — restraint in the Linear / Things tradition.
+FitSift is a private AI coach built around a local, portable, lossless training
+vault. Unlike social fitness networks and cloud-first AI summaries, it combines
+full-fidelity history, durable analysis memory, and user-chosen inference: a
+local model for maximum privacy or a user-controlled cloud model for frontier
+capability.
 
-Crucially: **calm core, with earned moments of delight.** Restrained by default,
-but expressive exactly where it aids comprehension — the charts, the route map,
-and the AI insight write-up. Delight always serves understanding; it is never
-decoration for its own sake.
+The product promise is local-first and private by default. Hosted storage is a
+future adapter, not the foundation of the current product.
 
-Voice: plain, exact, unhyped. Names things precisely (pace, HR zones, splits) and
-trusts the user to read data.
+## Operating Context
 
-## Anti-references
+- Athletes import local `.fit` files or fetch activities from Garmin Connect or
+  Strava, then retain raw files and lossless JSON in their own archive.
+- The current local pipeline has three roles: poller, analyzer, and web UI. They
+  coordinate through `~/.fit2json` rather than a hosted account.
+- FitSift's web UI provides the Library, activity detail, Analyze conversation,
+  saved memory, workout ingestion, and You profile surfaces.
+- Chat sessions, athlete profile data, workout files, and analysis memory persist
+  locally. Background polling and analysis are available through the current
+  CLI/supervisor workflow.
+- Phone use favors quick post-workout checks; desktop use favors detailed review,
+  comparison, and longer coaching conversations.
 
-- **Consumer-social fitness** (the primary anti-reference): feeds, likes, kudos,
-  leaderboards, follower counts, social comparison. FitSift is private and
-  personal; it must never borrow social-network patterns.
-- **Loud gamification:** streaks, confetti, badges, dopamine mechanics.
-- **Cluttered "pro" dashboards:** every widget on screen at once, nothing
-  prioritized.
-- **Generic AI-SaaS slop:** cream/violet gradients, gradient text, hero-metric
-  card templates, tracked-uppercase eyebrows above every section.
+## Capabilities and Constraints
 
-## Design Principles
+**Current capabilities**
 
-1. **Data is the hero.** Chrome recedes; numbers, charts, and the route lead.
-   Layout and color exist to make the data legible, not to decorate it.
-2. **Calm over loud.** Optimize for insight, not engagement. No gamification, no
-   dopamine tricks, no attention-grabbing motion.
-3. **Private by design.** Local-first by default — your data lives with you, and
-   you choose where analysis runs (fully local, or your own cloud key). Never reach
-   for social, comparison, or feed patterns — they contradict what this tool is.
-4. **Legible at a glance, deep on demand.** Summary first, detail when asked.
-   Progressive disclosure keeps each screen quiet while depth stays one tap away.
-5. **Restraint by default, expression where it counts.** The interface is
-   understated; the charts, map, and AI insights are where craft and delight are
-   allowed to concentrate.
-6. **Every theme first-class.** Light and dark are treated as equals, each with
-   verified contrast — craft must hold in both.
+- Lossless FIT conversion and a portable archive of raw FIT, JSON, and Markdown.
+- Garmin Connect and Strava ingestion, including incremental polling.
+- Local activity browsing, maps, charts, filtering, profile personalization,
+  resumable chat, and saved training-memory analysis.
+- Analysis through GitHub Copilot CLI, Ollama, or LM Studio. Arbitrary
+  OpenAI-compatible endpoints are available in the CLI but do not yet have a
+  first-class web settings flow.
+- The shipped experience is local and single-user. Multi-device E2EE sync,
+  multi-athlete coaching, sharing, and hosted storage remain planned work.
+- Automatic cloud-backed analysis must be explicit and cost-aware; it must not
+  silently spend a user's model budget.
+- Provider credentials are device-local secrets and must never enter synced
+  training data.
+
+## Brand Commitments
+
+FitSift is calm, precise, data-forward, and quietly confident. Its voice is
+plain, exact, and unhyped; it names pace, zones, splits, and uncertainty
+directly. The product is local-first, private by design, and trusts athletes to
+read their own data.
+
+It must not adopt consumer-social fitness patterns such as feeds, likes, kudos,
+leaderboards, follower counts, streaks, or social comparison. It also rejects
+loud gamification, cluttered pro dashboards, and generic AI-SaaS conventions.
+
+## Evidence on Hand
+
+- `README.md` documents the implemented CLI, lossless archive, analysis backends,
+  profile personalization, watch modes, and FitSift web UI.
+- `ARCHITECTURE.md` documents the current poller/analyzer/web topology and local
+  filesystem contract.
+- `docs/product-direction.md` records the owner-approved local-first direction,
+  current implementation boundaries, and phased roadmap.
+- `frontend/src/` contains the implemented FitSift React application.
+- The repository contains no customer testimonials, market benchmarks, press, or
+  production adoption evidence; future product copy must not fabricate them.
+
+## Product Principles
+
+1. **The athlete owns the record.** Preserve full-fidelity, portable source data
+   and keep local storage as the default.
+2. **Privacy boundaries stay explicit.** State when data leaves the device and
+   keep hosted behavior opt-in.
+3. **Model choice belongs to the user.** Support local and user-controlled cloud
+   inference without reselling tokens or hiding cost.
+4. **Insight beats engagement.** Optimize for understanding and durable memory,
+   never feeds, comparison, or dopamine mechanics.
+5. **Ship honest layers.** Distinguish implemented capabilities from planned sync,
+   coach, sharing, and hosted adapters.
 
 ## Accessibility & Inclusion
 

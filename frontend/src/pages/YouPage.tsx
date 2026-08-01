@@ -317,15 +317,8 @@ export function YouPage() {
   const estMaxHr = age != null ? 220 - age : null
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">You</h1>
-        <p className="text-sm text-slate-500">
-          Your personal data personalizes every analysis — heart-rate and power zones, calorie and
-          effort estimates, pacing, and coaching advice. Everything is optional and stored locally.
-        </p>
-      </div>
-
+    <div className="flex flex-col gap-6">
+      <h1 className="sr-only">You</h1>
       <SectionCard
         icon={<User className="h-5 w-5 text-brand-600" />}
         title="About you"
