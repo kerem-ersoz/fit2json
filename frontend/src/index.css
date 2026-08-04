@@ -35,6 +35,13 @@ html.analyze-viewport-locked body {
   body {
     touch-action: pan-x pan-y;
   }
+
+  /* WebKit zooms and pans when a focused form control renders below 16px. */
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
 }
 
 .scrollbar-hidden {

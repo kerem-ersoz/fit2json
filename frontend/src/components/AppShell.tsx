@@ -2,9 +2,10 @@ import { NavLink, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { clsx } from 'clsx'
 import { Brain, ListChecks, MessageSquare, Upload, User, type LucideIcon } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
 import { api } from '../lib/api'
 import { useUnits } from '../lib/units'
+import { useVisualViewportFrame } from '../lib/useVisualViewportFrame'
 import { ErrorBoundary } from './ErrorBoundary'
 import { useChat } from '../features/chat/ChatProvider'
 import { ChatDock } from '../features/chat/ChatDock'
@@ -109,8 +110,12 @@ function ChatHeaderButton() {
 export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation()
   const isAnalyze = location.pathname === '/analyze' || location.pathname === '/analyze/'
+  const shellRef = useRef<HTMLDivElement>(null)
+  useVisualViewportFrame(shellRef, isAnalyze)
+
   return (
     <div
+      ref={shellRef}
       className={clsx(
         isAnalyze
           ? 'fixed inset-x-0 top-0 flex h-dvh flex-col overflow-hidden overscroll-none lg:flex-row'

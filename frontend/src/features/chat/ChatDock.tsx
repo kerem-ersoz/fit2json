@@ -22,6 +22,7 @@ import {
 import { api, type MapStep } from '../../lib/api'
 import { sportMeta } from '../../lib/sport'
 import { formatDate } from '../../lib/format'
+import { useVisualViewportFrame } from '../../lib/useVisualViewportFrame'
 import { Button } from '../../components/ui/Button'
 import { MarkdownView } from '../../components/ui/Markdown'
 import { Sheet } from '../../components/ui/Sheet'
@@ -153,6 +154,8 @@ export function ChatDock() {
   // pane can never affect layout, scroll width, or intercept clicks in any engine.
   const [mounted, setMounted] = useState(open)
   const [shown, setShown] = useState(open)
+  const drawerRef = useRef<HTMLElement>(null)
+  useVisualViewportFrame(drawerRef, mounted || open)
 
   useEffect(() => {
     if (open) {
@@ -193,6 +196,7 @@ export function ChatDock() {
       />
 
       <aside
+        ref={drawerRef}
         role="dialog"
         aria-modal="true"
         aria-label="Chat"
