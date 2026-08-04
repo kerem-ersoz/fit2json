@@ -113,6 +113,7 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
         },
         onError: (msg) => {
           setRunning(false)
+          setOutput(committedOutputRef.current)
           setError(msg)
         },
       },

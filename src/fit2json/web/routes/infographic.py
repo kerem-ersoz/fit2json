@@ -26,7 +26,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 
 from fit2json import analyzer
 from fit2json.web.schemas import InfographicRequest
-from fit2json.web.sse import SSE_HEADERS
+from fit2json.web.sse import SSE_HEADERS, SSE_HEARTBEAT_SECONDS, stream_text_events
 from fit2json.web.sse import sse as _sse
 
 router = APIRouter(tags=["infographic"])
@@ -188,6 +188,7 @@ def stream_html(
             reasoning_effort=reasoning_effort or None,
             system_prompt=analyzer.INFOGRAPHIC_SYSTEM_PROMPT,
             final_instruction=analyzer.INFOGRAPHIC_FINAL_INSTRUCTION,
+            keepalive_interval=SSE_HEARTBEAT_SECONDS,
         )
     if resolved in analyzer.LOCAL_BACKENDS:
         url, key = analyzer.LOCAL_BACKENDS[resolved]
@@ -233,9 +234,10 @@ def _event_gen(req: InfographicRequest, resolved: str, analysis: str) -> Iterato
     yield _sse("start", {"backend": resolved})
     chunks: List[str] = []
     try:
-        for chunk in stream_html(resolved, analysis, req.model, req.reasoning_effort):
-            chunks.append(chunk)
-            yield _sse("delta", {"text": chunk})
+        yield from stream_text_events(
+            stream_html(resolved, analysis, req.model, req.reasoning_effort),
+            chunks,
+        )
     except Exception as exc:  # analyzer raises click.ClickException on failure
         yield _sse("error", {"message": getattr(exc, "message", None) or str(exc)})
         return

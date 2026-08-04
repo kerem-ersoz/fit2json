@@ -103,6 +103,64 @@ test.beforeEach(async ({ page }) => {
   await mockApi(page)
 })
 
+test('publishes standalone Home Screen app metadata', async ({ page }) => {
+  await page.goto('/')
+
+  const metadata = await page.evaluate(async () => {
+    const manifestLink = document.querySelector<HTMLLinkElement>('link[rel="manifest"]')
+    const manifest = manifestLink
+      ? await fetch(manifestLink.href).then((response) => response.json())
+      : null
+    return {
+      appleCapable: document.querySelector<HTMLMetaElement>(
+        'meta[name="apple-mobile-web-app-capable"]',
+      )?.content,
+      manifest,
+      mobileCapable: document.querySelector<HTMLMetaElement>(
+        'meta[name="mobile-web-app-capable"]',
+      )?.content,
+    }
+  })
+
+  expect(metadata.appleCapable).toBe('yes')
+  expect(metadata.mobileCapable).toBe('yes')
+  expect(metadata.manifest).toMatchObject({
+    display: 'standalone',
+    id: './',
+    scope: './',
+    start_url: './',
+  })
+})
+
+test('restores touch surfaces after browser chrome changes between tabs', async ({ page }) => {
+  await emulateVisualViewport(page)
+  await page.goto('/analyze')
+
+  const layoutHeight = await page.evaluate(() => window.innerHeight)
+  const chromeFrame = {
+    height: layoutHeight - 112,
+    offsetTop: 56,
+  }
+
+  await page.getByRole('link', { name: 'Add' }).tap()
+  await setVisualViewport(page, chromeFrame)
+  await page.getByRole('link', { name: 'Analyze' }).tap()
+
+  const shell = page.locator('#root > div')
+  await expectVisualViewportFrame(shell, chromeFrame)
+
+  const tabBar = page.locator('nav:visible').last()
+  const tabBarBounds = await tabBar.boundingBox()
+  expect(tabBarBounds).not.toBeNull()
+  expect(tabBarBounds!.y).toBeGreaterThanOrEqual(chromeFrame.offsetTop)
+  expect(tabBarBounds!.y + tabBarBounds!.height).toBeLessThanOrEqual(
+    chromeFrame.offsetTop + chromeFrame.height,
+  )
+
+  await page.getByRole('link', { name: 'You' }).tap()
+  await expect(page).toHaveURL(/\/you$/)
+})
+
 test('keeps Analyze interactive through iOS keyboard viewport changes', async ({ page }) => {
   await emulateVisualViewport(page)
   await page.goto('/analyze')
@@ -190,7 +248,15 @@ test('expands model thinking from its one-sentence summary', async ({ page }) =>
   await page.goto('/analyze')
 
   const savedChat = page.waitForRequest(
-    (request) => request.method() === 'PUT' && new URL(request.url()).pathname.includes('/api/chats/'),
+    (request) => {
+      if (request.method() !== 'PUT' || !new URL(request.url()).pathname.includes('/api/chats/')) {
+        return false
+      }
+      const body = request.postDataJSON() as {
+        messages?: { thinking_summary?: string }[]
+      }
+      return body.messages?.[1]?.thinking_summary === summary
+    },
   )
   await page.getByRole('textbox', { name: 'Message' }).fill('How did this session go?')
   await page.getByRole('button', { name: 'Send' }).tap()
@@ -216,16 +282,36 @@ test('expands model thinking from its one-sentence summary', async ({ page }) =>
 
 test('discards provisional Copilot narration when stopped', async ({ page }) => {
   const narration = 'I will inspect the workout file.'
-  await page.route('**/api/analyze', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'text/event-stream',
-      body: [
-        `event: start\ndata: ${JSON.stringify({ backend: 'copilot' })}\n\n`,
-        `event: delta\ndata: ${JSON.stringify({ text: narration })}\n\n`,
-      ].join(''),
-    }),
-  )
+  await page.addInitScript(({ narration }) => {
+    const originalFetch = window.fetch.bind(window)
+    window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input)
+      if (!url.includes('/api/analyze')) return originalFetch(input, init)
+
+      const encoder = new TextEncoder()
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              [
+                `event: start\ndata: ${JSON.stringify({ backend: 'copilot' })}\n\n`,
+                `event: delta\ndata: ${JSON.stringify({ text: narration })}\n\n`,
+              ].join(''),
+            ),
+          )
+          init?.signal?.addEventListener('abort', () => {
+            controller.error(new DOMException('Aborted', 'AbortError'))
+          })
+        },
+      })
+      return Promise.resolve(
+        new Response(body, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        }),
+      )
+    }) as typeof window.fetch
+  }, { narration })
   await page.goto('/analyze')
 
   await page.getByRole('textbox', { name: 'Message' }).fill('Review this workout')
@@ -234,4 +320,58 @@ test('discards provisional Copilot narration when stopped', async ({ page }) => 
 
   await page.getByRole('button', { name: 'Stop' }).tap()
   await expect(page.getByText(narration)).toBeHidden()
+})
+
+test('recovers when an analysis stream closes without a terminal event', async ({ page }) => {
+  let savedBeforeAnalysis = false
+
+  await page.route('**/api/chats/*', async (route) => {
+    const body = route.request().postDataJSON() as {
+      title?: string
+      backend?: string
+      model?: string
+      reasoning_effort?: string
+      activity_ids: string[]
+      messages: { id: string; role: string; content: string }[]
+    }
+    expect(body.messages).toHaveLength(1)
+    savedBeforeAnalysis = true
+    const id = new URL(route.request().url()).pathname.split('/').pop() ?? 'chat'
+    await route.fulfill({
+      json: {
+        id,
+        title: body.title ?? body.messages[0].content,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        backend: body.backend ?? '',
+        model: body.model ?? '',
+        reasoning_effort: body.reasoning_effort ?? '',
+        activity_ids: body.activity_ids,
+        messages: body.messages,
+      },
+    })
+  })
+  await page.route('**/api/analyze', async (route) => {
+    expect(savedBeforeAnalysis).toBe(true)
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: [
+        'event: start\ndata: {"backend":"copilot"}\n\n',
+        'event: delta\ndata: {"text":"I will inspect the workout file."}\n\n',
+        'event: ping\ndata: {}\n\n',
+      ].join(''),
+    })
+  })
+
+  await page.goto('/analyze')
+  await page.getByRole('textbox', { name: 'Message' }).fill('Review my latest run')
+  await page.getByRole('button', { name: 'Send' }).click()
+
+  await expect(page.getByRole('alert')).toContainText(
+    'The connection closed before the response finished.',
+  )
+  await expect(page.getByText('Thinking…')).toBeHidden()
+  await expect(page.getByText('I will inspect the workout file.')).toBeHidden()
+  await expect(page.getByRole('button', { name: 'Send' })).toBeVisible()
 })

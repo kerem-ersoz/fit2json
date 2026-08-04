@@ -14,7 +14,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from fit2json.memory import MemoryStore, _session_metrics
 from fit2json.memory import activity_id as memory_activity_id
@@ -493,6 +493,73 @@ def latest_compatible_analysis(
     return None
 
 
+def stream_workout_analysis(
+    activity: DecodedActivity,
+    path: Path,
+    backend: str,
+    model: Optional[str],
+    reasoning_effort: Optional[str],
+    prompt: Optional[str] = None,
+    keepalive_interval: Optional[float] = None,
+) -> Iterator[str]:
+    """Stream one concise analysis used as a multi-workout building block."""
+    from fit2json import analyzer
+
+    workout_prompt = prompt or CANONICAL_WORKOUT_PROMPT
+
+    if backend == "copilot":
+        return analyzer.stream_copilot(
+            prompt=workout_prompt,
+            workout_paths=[path],
+            memory_dir=None,
+            model=model,
+            silent=True,
+            reasoning_effort=reasoning_effort or None,
+            keepalive_interval=keepalive_interval,
+        )
+    if backend in analyzer.LOCAL_BACKENDS:
+        url, key = analyzer.LOCAL_BACKENDS[backend]
+        workout_json = json.dumps({"activities": [activity.to_dict()]}, ensure_ascii=False)
+        return analyzer.stream_openai_compatible(
+            prompt=workout_prompt,
+            workout_json=workout_json,
+            base_url=url,
+            api_key=key,
+            memory_digest=None,
+            model=model,
+        )
+    raise ValueError(f"Unsupported analysis backend: {backend}")
+
+
+def record_workout_analysis(
+    activity: DecodedActivity,
+    text: str,
+    backend: str,
+    model: Optional[str],
+    reasoning_effort: Optional[str],
+    prompt: Optional[str] = None,
+) -> str:
+    """Persist a completed multi-workout building block and return normalized text."""
+    workout_prompt = prompt or CANONICAL_WORKOUT_PROMPT
+
+    text = (text or "").strip()
+    if text:
+        try:
+            store = _memory_store()
+            store.root.mkdir(parents=True, exist_ok=True)
+            store.record(
+                activity,
+                workout_prompt,
+                text,
+                backend=backend,
+                model=model or "",
+                reasoning_effort=reasoning_effort or "",
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            logger.warning("Could not cache generated workout analysis: %s", exc)
+    return text
+
+
 def generate_workout_analysis(
     activity: DecodedActivity,
     path: Path,
@@ -502,53 +569,26 @@ def generate_workout_analysis(
     prompt: Optional[str] = None,
     save: bool = True,
 ) -> str:
-    """Run a concise single-workout analysis and (optionally) persist it as a memory building block."""
-    from fit2json import analyzer
-
-    workout_prompt = prompt or CANONICAL_WORKOUT_PROMPT
-
-    if backend == "copilot":
-        text = "".join(
-            analyzer.stream_copilot(
-                prompt=workout_prompt,
-                workout_paths=[path],
-                memory_dir=None,
-                model=model,
-                silent=True,
-                reasoning_effort=reasoning_effort or None,
-            )
+    """Run a concise single-workout analysis and optionally persist it."""
+    text = "".join(
+        stream_workout_analysis(
+            activity,
+            path,
+            backend,
+            model,
+            reasoning_effort,
+            prompt,
         )
-    elif backend in analyzer.LOCAL_BACKENDS:
-        url, key = analyzer.LOCAL_BACKENDS[backend]
-        workout_json = json.dumps({"activities": [activity.to_dict()]}, ensure_ascii=False)
-        text = "".join(
-            analyzer.stream_openai_compatible(
-                prompt=workout_prompt,
-                workout_json=workout_json,
-                base_url=url,
-                api_key=key,
-                memory_digest=None,
-                model=model,
-            )
+    ).strip()
+    if save:
+        return record_workout_analysis(
+            activity,
+            text,
+            backend,
+            model,
+            reasoning_effort,
+            prompt,
         )
-    else:
-        raise ValueError(f"Unsupported analysis backend: {backend}")
-
-    text = (text or "").strip()
-    if save and text:
-        store = _memory_store()
-        store.root.mkdir(parents=True, exist_ok=True)
-        try:
-            store.record(
-                activity,
-                workout_prompt,
-                text,
-                backend=backend,
-                model=model or "",
-                reasoning_effort=reasoning_effort or "",
-            )
-        except Exception:
-            pass
     return text
 
 

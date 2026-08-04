@@ -354,8 +354,7 @@ async function startSse(
   return res
 }
 
-/** Read an SSE Response body, dispatching each parsed frame. Stops silently when the
- *  request is aborted via its AbortController; other stream errors propagate. */
+/** Read an SSE response body and dispatch each complete frame. */
 async function pumpSse(res: Response, onFrame: (frame: SseFrame) => void): Promise<void> {
   const reader = res.body!.getReader()
   const decoder = new TextDecoder()
@@ -374,10 +373,45 @@ async function pumpSse(res: Response, onFrame: (frame: SseFrame) => void): Promi
         if (parsed) onFrame(parsed)
       }
     }
-  } catch (e) {
-    if ((e as Error)?.name === 'AbortError') return // cancelled via AbortController — expected
-    throw e
+  } finally {
+    reader.releaseLock()
   }
+}
+
+const INTERRUPTED_STREAM_MESSAGE =
+  'The connection closed before the response finished. Please try again.'
+
+function isAbortError(error: unknown, signal?: AbortSignal): boolean {
+  return signal?.aborted === true || (error as Error)?.name === 'AbortError'
+}
+
+async function consumeSse(
+  path: string,
+  body: unknown,
+  signal: AbortSignal | undefined,
+  onFrame: (frame: SseFrame) => void,
+  onError: (message: string) => void,
+): Promise<void> {
+  const started = await startSse(path, body, signal)
+  if (started === null) return
+  if (typeof started === 'string') {
+    onError(started)
+    return
+  }
+
+  let terminal = false
+  try {
+    await pumpSse(started, (frame) => {
+      if (frame.event === 'done' || frame.event === 'error') terminal = true
+      onFrame(frame)
+    })
+  } catch (error) {
+    if (terminal || isAbortError(error, signal)) return
+    onError(INTERRUPTED_STREAM_MESSAGE)
+    return
+  }
+
+  if (!terminal && !signal?.aborted) onError(INTERRUPTED_STREAM_MESSAGE)
 }
 
 /** POST /analyze and stream the Server-Sent Events back through the handlers. */
@@ -386,26 +420,26 @@ export async function streamAnalyze(
   handlers: StreamHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
-  const started = await startSse('/analyze', body, signal)
-  if (started === null) return // aborted — stop silently
-  if (typeof started === 'string') {
-    handlers.onError?.(started)
-    return
-  }
-  await pumpSse(started, (parsed) => {
-    if (parsed.event === 'start') handlers.onStart?.(parsed.data.backend)
-    else if (parsed.event === 'step') handlers.onStep?.(parsed.data)
-    else if (parsed.event === 'reduce') handlers.onReduce?.(parsed.data)
-    else if (parsed.event === 'thinking')
-      handlers.onThinking?.({
-        summary: parsed.data.summary ?? '',
-        text: parsed.data.text ?? '',
-      })
-    else if (parsed.event === 'delta') handlers.onDelta(parsed.data.text ?? '')
-    else if (parsed.event === 'replace') handlers.onReplace?.(parsed.data.text ?? '')
-    else if (parsed.event === 'done') handlers.onDone?.(parsed.data)
-    else if (parsed.event === 'error') handlers.onError?.(parsed.data.message ?? 'Analysis failed')
-  })
+  await consumeSse(
+    '/analyze',
+    body,
+    signal,
+    (parsed) => {
+      if (parsed.event === 'start') handlers.onStart?.(parsed.data.backend)
+      else if (parsed.event === 'step') handlers.onStep?.(parsed.data)
+      else if (parsed.event === 'reduce') handlers.onReduce?.(parsed.data)
+      else if (parsed.event === 'thinking')
+        handlers.onThinking?.({
+          summary: parsed.data.summary ?? '',
+          text: parsed.data.text ?? '',
+        })
+      else if (parsed.event === 'delta') handlers.onDelta(parsed.data.text ?? '')
+      else if (parsed.event === 'replace') handlers.onReplace?.(parsed.data.text ?? '')
+      else if (parsed.event === 'done') handlers.onDone?.(parsed.data)
+      else if (parsed.event === 'error') handlers.onError?.(parsed.data.message ?? 'Analysis failed')
+    },
+    (message) => handlers.onError?.(message),
+  )
 }
 
 export interface InfographicBody {
@@ -433,18 +467,18 @@ export async function streamInfographic(
   handlers: InfographicHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
-  const started = await startSse('/infographic', body, signal)
-  if (started === null) return // aborted — stop silently
-  if (typeof started === 'string') {
-    handlers.onError?.(started)
-    return
-  }
-  await pumpSse(started, (parsed) => {
-    if (parsed.event === 'start') handlers.onStart?.(parsed.data.backend)
-    else if (parsed.event === 'delta') handlers.onDelta(parsed.data.text ?? '')
-    else if (parsed.event === 'done') handlers.onDone?.(parsed.data)
-    else if (parsed.event === 'error') handlers.onError?.(parsed.data.message ?? 'Infographic failed')
-  })
+  await consumeSse(
+    '/infographic',
+    body,
+    signal,
+    (parsed) => {
+      if (parsed.event === 'start') handlers.onStart?.(parsed.data.backend)
+      else if (parsed.event === 'delta') handlers.onDelta(parsed.data.text ?? '')
+      else if (parsed.event === 'done') handlers.onDone?.(parsed.data)
+      else if (parsed.event === 'error') handlers.onError?.(parsed.data.message ?? 'Infographic failed')
+    },
+    (message) => handlers.onError?.(message),
+  )
 }
 
 // ── Persisted infographics for saved analyses (keyed by memory entry_id) ──────
@@ -486,20 +520,16 @@ export async function streamMemoryInfographic(
   handlers: MemoryInfographicHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
-  const started = await startSse(
+  await consumeSse(
     `/memory/${encodeURIComponent(entryId)}/infographic`,
     body,
     signal,
+    (parsed) => {
+      if (parsed.event === 'start') handlers.onStart?.(parsed.data.backend)
+      else if (parsed.event === 'delta') handlers.onDelta(parsed.data.text ?? '')
+      else if (parsed.event === 'done') handlers.onDone?.(parsed.data)
+      else if (parsed.event === 'error') handlers.onError?.(parsed.data.message ?? 'Infographic failed')
+    },
+    (message) => handlers.onError?.(message),
   )
-  if (started === null) return // aborted — stop silently
-  if (typeof started === 'string') {
-    handlers.onError?.(started)
-    return
-  }
-  await pumpSse(started, (parsed) => {
-    if (parsed.event === 'start') handlers.onStart?.(parsed.data.backend)
-    else if (parsed.event === 'delta') handlers.onDelta(parsed.data.text ?? '')
-    else if (parsed.event === 'done') handlers.onDone?.(parsed.data)
-    else if (parsed.event === 'error') handlers.onError?.(parsed.data.message ?? 'Infographic failed')
-  })
 }

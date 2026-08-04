@@ -32,22 +32,6 @@ export function AnalyzePage() {
     setOpen(false)
   }, [setOpen])
 
-  useEffect(() => {
-    const root = document.documentElement
-    const body = document.body
-    const scrollY = window.scrollY
-    const previousBodyTop = body.style.top
-
-    root.classList.add('analyze-viewport-locked')
-    body.style.top = `-${scrollY}px`
-
-    return () => {
-      root.classList.remove('analyze-viewport-locked')
-      body.style.top = previousBodyTop
-      window.scrollTo({ top: scrollY, behavior: 'auto' })
-    }
-  }, [])
-
   const selected = useMemo(() => new Set(activityIds), [activityIds])
 
   const sports = useMemo(() => {

@@ -24,7 +24,7 @@ from fit2json.memory import MemoryStore
 from fit2json.web import services
 from fit2json.web.config import get_settings
 from fit2json.web.schemas import AnalyzeRequest
-from fit2json.web.sse import SSE_HEADERS
+from fit2json.web.sse import SSE_HEADERS, SSE_HEARTBEAT_SECONDS, stream_text_events
 from fit2json.web.sse import sse as _sse
 
 router = APIRouter(tags=["analyze"])
@@ -49,6 +49,7 @@ def _stream_text(
             reasoning_effort=reasoning_effort or None,
             athlete_profile=athlete_profile,
             event_handler=event_handler,
+            keepalive_interval=SSE_HEARTBEAT_SECONDS,
         )
     if backend in analyzer.LOCAL_BACKENDS:
         url, key = analyzer.LOCAL_BACKENDS[backend]
@@ -107,10 +108,13 @@ def _model_events(stream: Iterator[str], copilot_events: List[dict]):
         return emitted
 
     for chunk in stream:
-        if copilot_events:
+        had_events = bool(copilot_events)
+        if had_events:
             structured = True
             yield from drain_pending()
         if not chunk:
+            if not had_events:
+                yield "ping", {}, ""
             continue
         committed.append(chunk)
         yield None, {}, chunk
@@ -123,11 +127,16 @@ def _model_events(stream: Iterator[str], copilot_events: List[dict]):
 
 def _stream_response(stream: Iterator[str], copilot_events: List[dict]):
     """Yield SSE frames and the committed answer chunks used for persistence."""
-    for event, data, answer_chunk in _model_events(stream, copilot_events):
-        if event:
-            yield _sse(event, data), ""
-        if answer_chunk:
-            yield "", answer_chunk
+    try:
+        for event, data, answer_chunk in _model_events(stream, copilot_events):
+            if event:
+                yield _sse(event, data), ""
+            if answer_chunk:
+                yield "", answer_chunk
+    finally:
+        close = getattr(stream, "close", None)
+        if close is not None:
+            close()
 
 
 def _synthesis_prompt(blocks, user_prompt: str) -> str:
@@ -189,6 +198,7 @@ def _freeform_event_gen(req: AnalyzeRequest, resolved: str) -> Iterator[str]:
                 library_dir=settings.library_dir,
                 athlete_profile=athlete_profile,
                 event_handler=copilot_events.append,
+                keepalive_interval=SSE_HEARTBEAT_SECONDS,
             )
         if resolved in analyzer.LOCAL_BACKENDS:
             url, key = analyzer.LOCAL_BACKENDS[resolved]
@@ -243,6 +253,7 @@ def _single_event_gen(req: AnalyzeRequest, resolved: str, found_one) -> Iterator
                 reasoning_effort=req.reasoning_effort,
                 athlete_profile=athlete_profile,
                 event_handler=copilot_events.append,
+                keepalive_interval=SSE_HEARTBEAT_SECONDS,
             )
         if resolved in analyzer.LOCAL_BACKENDS:
             url, key = analyzer.LOCAL_BACKENDS[resolved]
@@ -309,9 +320,30 @@ def _multi_event_gen(req: AnalyzeRequest, resolved: str, found, ids: List[str]) 
                 aid, resolved, req.model, req.reasoning_effort, workout_prompt
             )
             reused = existing is not None
-            text = existing if reused else services.generate_workout_analysis(
-                activity, path, resolved, req.model, req.reasoning_effort, workout_prompt, save=True
-            )
+            if reused:
+                text = existing
+            else:
+                map_chunks: List[str] = []
+                yield from stream_text_events(
+                    services.stream_workout_analysis(
+                        activity,
+                        path,
+                        resolved,
+                        req.model,
+                        req.reasoning_effort,
+                        workout_prompt,
+                        keepalive_interval=SSE_HEARTBEAT_SECONDS,
+                    ),
+                    map_chunks,
+                )
+                text = services.record_workout_analysis(
+                    activity,
+                    "".join(map_chunks),
+                    resolved,
+                    req.model,
+                    req.reasoning_effort,
+                    workout_prompt,
+                )
         except Exception as exc:
             yield _sse("error", {"message": getattr(exc, "message", None) or str(exc)})
             return

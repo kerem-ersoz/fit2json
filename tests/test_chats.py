@@ -123,6 +123,13 @@ class TestListGetDelete:
         (tmp_path / "broken.json").write_text("{not json", encoding="utf-8")
         assert [s["id"] for s in store.list()] == ["good"]
 
+    def test_list_skips_appledouble_and_non_utf8_files(self, tmp_path):
+        store = ChatStore(tmp_path)
+        store.save("good", {"messages": _msgs(("user", "hi"))})
+        (tmp_path / "._good.json").write_bytes(b"\x00\x05\x16\x07AppleDouble\x00\xa3")
+        (tmp_path / "bad-encoding.json").write_bytes(b'{"title":"\xa3"}')
+        assert [s["id"] for s in store.list()] == ["good"]
+
 
 class TestSanitizeId:
     def test_strips_path_traversal(self):

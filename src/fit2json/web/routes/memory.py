@@ -20,7 +20,7 @@ from fit2json.web import services
 from fit2json.web.config import get_settings
 from fit2json.web.routes import infographic as ig
 from fit2json.web.schemas import InfographicOptions
-from fit2json.web.sse import SSE_HEADERS
+from fit2json.web.sse import SSE_HEADERS, stream_text_events
 from fit2json.web.sse import sse as _sse
 
 router = APIRouter(prefix="/memory", tags=["memory"])
@@ -121,9 +121,10 @@ def infographic_generate(entry_id: str, opts: Optional[InfographicOptions] = Non
         yield _sse("start", {"backend": resolved})
         chunks: List[str] = []
         try:
-            for chunk in ig.stream_html(resolved, body, opts.model, opts.reasoning_effort):
-                chunks.append(chunk)
-                yield _sse("delta", {"text": chunk})
+            yield from stream_text_events(
+                ig.stream_html(resolved, body, opts.model, opts.reasoning_effort),
+                chunks,
+            )
         except Exception as exc:  # analyzer raises click.ClickException on failure
             yield _sse("error", {"message": getattr(exc, "message", None) or str(exc)})
             return

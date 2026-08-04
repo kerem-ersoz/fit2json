@@ -1,6 +1,7 @@
 """Tests for the analysis backend harness."""
 
 import json
+import threading
 
 import pytest
 
@@ -49,6 +50,7 @@ class TestCompaction:
 class _FakePopen:
     def __init__(self, cmd, **kwargs):
         _FakePopen.last_cmd = cmd
+        _FakePopen.last_kwargs = kwargs
         self.returncode = 0
         self.stdout = iter(["Analysis part 1\n", "Analysis part 2\n"])
 
@@ -58,7 +60,7 @@ class _FakePopen:
 
         self.stderr = _Err()
 
-    def wait(self):
+    def wait(self, timeout=None):
         return 0
 
 
@@ -109,8 +111,34 @@ class _FakeJsonPopen:
 
         self.stderr = _Err()
 
-    def wait(self):
+    def wait(self, timeout=None):
         return 0
+
+
+class _BlockingPopen:
+    def __init__(self, cmd, **kwargs):
+        self.released = threading.Event()
+        self.returncode = None
+
+        class _Out:
+            def __iter__(self_inner):
+                return self_inner
+
+            def __next__(self_inner):
+                self.released.wait(timeout=2)
+                raise StopIteration
+
+        class _Err:
+            def read(self_inner):
+                return ""
+
+        self.stdout = _Out()
+        self.stderr = _Err()
+
+    def wait(self, timeout=None):
+        self.released.wait(timeout=timeout)
+        self.returncode = -15
+        return self.returncode
 
 
 class TestRunCopilot:
@@ -146,6 +174,52 @@ class TestRunCopilot:
 
         with pytest.raises(click.ClickException):
             analyzer.run_copilot("p", [], None)
+
+    def test_keepalive_and_close_terminate_abandoned_process(self, monkeypatch):
+        from fit2json.web.sse import stream_text_events
+
+        monkeypatch.setattr(analyzer.shutil, "which", lambda name: "/usr/bin/copilot")
+        monkeypatch.setattr(analyzer.subprocess, "Popen", _BlockingPopen)
+        terminated = []
+
+        def terminate(proc):
+            terminated.append(proc)
+            proc.released.set()
+
+        monkeypatch.setattr(analyzer, "_terminate_process_group", terminate)
+
+        stream = analyzer.stream_copilot(
+            prompt="p",
+            workout_paths=[],
+            keepalive_interval=0.01,
+        )
+        events = stream_text_events(stream, [])
+        assert "event: ping" in next(events)
+        events.close()
+        assert len(terminated) == 1
+
+    def test_windows_tree_kill_targets_exact_pid(self, monkeypatch):
+        calls = []
+
+        class _Proc:
+            pid = 4242
+
+            @staticmethod
+            def poll():
+                return None
+
+            @staticmethod
+            def kill():
+                raise AssertionError("direct kill should not run when taskkill succeeds")
+
+        def fake_run(cmd, **kwargs):
+            calls.append((cmd, kwargs))
+            return type("Result", (), {"returncode": 0})()
+
+        monkeypatch.setattr(analyzer.subprocess, "run", fake_run)
+        analyzer._kill_windows_process_tree(_Proc())
+
+        assert calls[0][0] == ["taskkill.exe", "/PID", "4242", "/T", "/F"]
 
     def test_no_model_flag_when_unset(self, monkeypatch, tmp_path):
         """Omitting --model lets the CLI use the user's configured default (e.g. Opus).

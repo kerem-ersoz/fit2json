@@ -218,6 +218,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         : q
       const model = !effectiveModel || effectiveModel === 'auto' ? undefined : effectiveModel
 
+      // Save the athlete's turn before inference starts so a killed tab or broken stream
+      // cannot erase the question.
+      await persist(id, [...prior, userMsg], snap)
+
       let asstContent = ''
       let asstThinkingSummary = ''
       let asstThinking = ''
@@ -295,15 +299,44 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             )
           },
           onError: (msg) => {
+            const committed =
+              committedRef.current?.content ?? (resolvedBackend !== 'copilot' ? asstContent : '')
             setRunning(false)
             committedRef.current = null
             setError(msg)
-            setMessages((m) => m.filter((x) => !(x.id === asstId && x.content === '' && !(x.steps && x.steps.length))))
-            void persist(id, [...prior, userMsg], snap)
+            setMessages((messages) =>
+              messages
+                .map((message) =>
+                  message.id === asstId ? { ...message, content: committed } : message,
+                )
+                .filter(
+                  (message) =>
+                    !(
+                      message.id === asstId &&
+                      message.content === '' &&
+                      !(message.steps && message.steps.length)
+                    ),
+                ),
+            )
+            const durable = committed
+              ? [
+                  ...prior,
+                  userMsg,
+                  {
+                    id: asstId,
+                    role: 'assistant' as const,
+                    content: committed,
+                    thinkingSummary: asstThinkingSummary || undefined,
+                    thinking: asstThinking || undefined,
+                  },
+                ]
+              : [...prior, userMsg]
+            void persist(id, durable, snap)
           },
         },
         controller.signal,
       )
+      if (abortRef.current === controller) abortRef.current = null
     },
     [running, chatId, messages, activityIds, workoutPrompt, backend, effectiveModel, effort, title, persist],
   )
