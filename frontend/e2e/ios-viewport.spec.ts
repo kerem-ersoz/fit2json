@@ -227,6 +227,101 @@ test('keeps touch form controls above the iOS focus-zoom threshold', async ({ pa
   expect(fontSizes.every((size) => size >= 16)).toBe(true)
 })
 
+test('expands model thinking from its one-sentence summary', async ({ page }) => {
+  const summary = 'Reviewing pace and heart-rate evidence'
+  const reasoning =
+    'The opening pace was controlled while heart rate rose gradually. The finish stayed aerobic.'
+  const frames = [
+    `event: start\ndata: ${JSON.stringify({ backend: 'copilot' })}\n\n`,
+    `event: thinking\ndata: ${JSON.stringify({ summary, text: reasoning })}\n\n`,
+    `event: delta\ndata: ${JSON.stringify({ text: 'A controlled aerobic session.' })}\n\n`,
+    `event: replace\ndata: ${JSON.stringify({ text: 'A controlled aerobic session.' })}\n\n`,
+    `event: done\ndata: ${JSON.stringify({ chars: 29, saved: null, backend: 'copilot' })}\n\n`,
+  ]
+  await page.route('**/api/analyze', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: frames.join(''),
+    }),
+  )
+  await page.goto('/analyze')
+
+  const savedChat = page.waitForRequest(
+    (request) => {
+      if (request.method() !== 'PUT' || !new URL(request.url()).pathname.includes('/api/chats/')) {
+        return false
+      }
+      const body = request.postDataJSON() as {
+        messages?: { thinking_summary?: string }[]
+      }
+      return body.messages?.[1]?.thinking_summary === summary
+    },
+  )
+  await page.getByRole('textbox', { name: 'Message' }).fill('How did this session go?')
+  await page.getByRole('button', { name: 'Send' }).tap()
+
+  const disclosure = page.locator('details').filter({ hasText: summary })
+  const detail = page.getByText(reasoning)
+  await expect(disclosure).toBeVisible()
+  expect(await disclosure.evaluate((element) => (element as HTMLDetailsElement).open)).toBe(false)
+  await expect(detail).toBeHidden()
+
+  const trigger = disclosure.locator('summary')
+  expect(await trigger.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44)
+  await trigger.tap()
+
+  await expect(detail).toBeVisible()
+  expect(await disclosure.evaluate((element) => (element as HTMLDetailsElement).open)).toBe(true)
+  await expect(page.getByText('A controlled aerobic session.')).toBeVisible()
+
+  const savedBody = (await savedChat).postDataJSON()
+  expect(savedBody.messages[1].thinking_summary).toBe(summary)
+  expect(savedBody.messages[1].thinking).toBe(reasoning)
+})
+
+test('discards provisional Copilot narration when stopped', async ({ page }) => {
+  const narration = 'I will inspect the workout file.'
+  await page.addInitScript(({ narration }) => {
+    const originalFetch = window.fetch.bind(window)
+    window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input)
+      if (!url.includes('/api/analyze')) return originalFetch(input, init)
+
+      const encoder = new TextEncoder()
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              [
+                `event: start\ndata: ${JSON.stringify({ backend: 'copilot' })}\n\n`,
+                `event: delta\ndata: ${JSON.stringify({ text: narration })}\n\n`,
+              ].join(''),
+            ),
+          )
+          init?.signal?.addEventListener('abort', () => {
+            controller.error(new DOMException('Aborted', 'AbortError'))
+          })
+        },
+      })
+      return Promise.resolve(
+        new Response(body, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        }),
+      )
+    }) as typeof window.fetch
+  }, { narration })
+  await page.goto('/analyze')
+
+  await page.getByRole('textbox', { name: 'Message' }).fill('Review this workout')
+  await page.getByRole('button', { name: 'Send' }).tap()
+  await expect(page.getByText(narration)).toBeVisible()
+
+  await page.getByRole('button', { name: 'Stop' }).tap()
+  await expect(page.getByText(narration)).toBeHidden()
+})
+
 test('recovers when an analysis stream closes without a terminal event', async ({ page }) => {
   let savedBeforeAnalysis = false
 
@@ -261,7 +356,11 @@ test('recovers when an analysis stream closes without a terminal event', async (
     await route.fulfill({
       status: 200,
       contentType: 'text/event-stream',
-      body: 'event: start\ndata: {"backend":"copilot"}\n\nevent: ping\ndata: {}\n\n',
+      body: [
+        'event: start\ndata: {"backend":"copilot"}\n\n',
+        'event: delta\ndata: {"text":"I will inspect the workout file."}\n\n',
+        'event: ping\ndata: {}\n\n',
+      ].join(''),
     })
   })
 
@@ -273,5 +372,6 @@ test('recovers when an analysis stream closes without a terminal event', async (
     'The connection closed before the response finished.',
   )
   await expect(page.getByText('Thinking…')).toBeHidden()
+  await expect(page.getByText('I will inspect the workout file.')).toBeHidden()
   await expect(page.getByRole('button', { name: 'Send' })).toBeVisible()
 })

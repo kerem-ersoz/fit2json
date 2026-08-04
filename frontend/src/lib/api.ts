@@ -145,6 +145,8 @@ export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
+  thinking_summary?: string | null
+  thinking?: string | null
   created_at?: string
 }
 
@@ -283,11 +285,18 @@ export interface MapStep {
   state: 'start' | 'done'
 }
 
+export interface ThinkingInfo {
+  summary: string
+  text: string
+}
+
 export interface StreamHandlers {
   onStart?: (backend: string) => void
   onStep?: (step: MapStep) => void
   onReduce?: (info: { count: number }) => void
+  onThinking?: (info: ThinkingInfo) => void
   onDelta: (text: string) => void
+  onReplace?: (text: string) => void
   onDone?: (info: { chars: number; saved: string | null; backend: string }) => void
   onError?: (message: string) => void
 }
@@ -419,7 +428,13 @@ export async function streamAnalyze(
       if (parsed.event === 'start') handlers.onStart?.(parsed.data.backend)
       else if (parsed.event === 'step') handlers.onStep?.(parsed.data)
       else if (parsed.event === 'reduce') handlers.onReduce?.(parsed.data)
+      else if (parsed.event === 'thinking')
+        handlers.onThinking?.({
+          summary: parsed.data.summary ?? '',
+          text: parsed.data.text ?? '',
+        })
       else if (parsed.event === 'delta') handlers.onDelta(parsed.data.text ?? '')
+      else if (parsed.event === 'replace') handlers.onReplace?.(parsed.data.text ?? '')
       else if (parsed.event === 'done') handlers.onDone?.(parsed.data)
       else if (parsed.event === 'error') handlers.onError?.(parsed.data.message ?? 'Analysis failed')
     },

@@ -64,6 +64,57 @@ class _FakePopen:
         return 0
 
 
+class _FakeJsonPopen:
+    def __init__(self, cmd, **kwargs):
+        _FakeJsonPopen.last_cmd = cmd
+        self.returncode = 0
+        events = [
+            {
+                "type": "assistant.reasoning_delta",
+                "data": {"reasoningId": "r1", "deltaContent": "Checking the workout. "},
+            },
+            {
+                "type": "assistant.message_delta",
+                "data": {"messageId": "m1", "deltaContent": "I will read the file."},
+            },
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m1",
+                    "content": "I will read the file.",
+                    "toolRequests": [{"toolCallId": "t1", "name": "view"}],
+                },
+            },
+            {
+                "type": "assistant.reasoning",
+                "data": {"reasoningId": "r1", "content": "Checking the workout. The evidence is clear."},
+            },
+            {
+                "type": "assistant.message_delta",
+                "data": {"messageId": "m2", "deltaContent": "Final answer"},
+            },
+            {
+                "type": "assistant.message",
+                "data": {"messageId": "m2", "content": "Final answer", "toolRequests": []},
+            },
+            {
+                "type": "assistant.reasoning",
+                "agentId": "subagent-1",
+                "data": {"reasoningId": "sub", "content": "Hidden sub-agent trace"},
+            },
+        ]
+        self.stdout = iter(json.dumps(event) + "\n" for event in events)
+
+        class _Err:
+            def read(self_inner):
+                return ""
+
+        self.stderr = _Err()
+
+    def wait(self, timeout=None):
+        return 0
+
+
 class _BlockingPopen:
     def __init__(self, cmd, **kwargs):
         self.released = threading.Event()
@@ -216,6 +267,33 @@ class TestRunCopilot:
                 prompt="p", workout_paths=[], memory_dir=None,
                 model="auto", stream=False, reasoning_effort="max",
             )
+
+    def test_structured_stream_separates_reasoning_and_final_answer(self, monkeypatch):
+        monkeypatch.setattr(analyzer.shutil, "which", lambda name: "/usr/bin/copilot")
+        monkeypatch.setattr(analyzer.subprocess, "Popen", _FakeJsonPopen)
+        events = []
+
+        chunks = list(
+            analyzer.stream_copilot(
+                prompt="p",
+                workout_paths=[],
+                event_handler=events.append,
+            )
+        )
+
+        assert chunks == ["", "", "", "", "", "Final answer"]
+        assert [event["type"] for event in events] == [
+            "assistant.reasoning_delta",
+            "assistant.message_delta",
+            "assistant.message",
+            "assistant.reasoning",
+            "assistant.message_delta",
+            "assistant.message",
+        ]
+        cmd = _FakeJsonPopen.last_cmd
+        assert cmd[cmd.index("--output-format") + 1] == "json"
+        assert cmd[cmd.index("--stream") + 1] == "on"
+        assert "--enable-reasoning-summaries" in cmd
 
 
 def test_infographic_prompt_prioritizes_latest_corrections():

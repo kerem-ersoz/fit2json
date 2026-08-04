@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Loader2, Sparkles, Square } from 'lucide-react'
-import { api, streamAnalyze } from '../../lib/api'
+import { Sparkles, Square } from 'lucide-react'
+import { api, streamAnalyze, type ThinkingInfo } from '../../lib/api'
 import { Button } from '../../components/ui/Button'
 import { Card, CardBody } from '../../components/ui/Card'
 import { MarkdownView } from '../../components/ui/Markdown'
+import { ThinkingDisclosure } from '../../components/ui/ThinkingDisclosure'
 import { AnalysisView } from './AnalysisView'
 import { formatDateTime } from '../../lib/format'
 
@@ -46,8 +47,11 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
   const [effort, setEffort] = useState<string>('')
   const [running, setRunning] = useState(false)
   const [output, setOutput] = useState('')
+  const [thinking, setThinking] = useState<ThinkingInfo>({ summary: '', text: '' })
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const committedOutputRef = useRef('')
+  const streamBackendRef = useRef('')
   const sectionRef = useRef<HTMLElement>(null)
   const promptRef = useRef<HTMLTextAreaElement>(null)
   const [openIds, setOpenIds] = useState<Set<string>>(new Set())
@@ -73,6 +77,9 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
     setRunning(true)
     setError(null)
     setOutput('')
+    setThinking({ summary: '', text: '' })
+    committedOutputRef.current = ''
+    streamBackendRef.current = backend
     const controller = new AbortController()
     abortRef.current = controller
     await streamAnalyze(
@@ -83,7 +90,20 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
         reasoning_effort: backend === 'copilot' && effort ? effort : undefined,
       },
       {
-        onDelta: (text) => setOutput((o) => o + text),
+        onStart: (value) => {
+          streamBackendRef.current = value
+        },
+        onThinking: setThinking,
+        onDelta: (text) =>
+          setOutput((output) => {
+            const next = output + text
+            if (streamBackendRef.current !== 'copilot') committedOutputRef.current = next
+            return next
+          }),
+        onReplace: (text) => {
+          committedOutputRef.current = text
+          setOutput(text)
+        },
         onDone: (info) => {
           setRunning(false)
           if (info.saved) {
@@ -93,6 +113,7 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
         },
         onError: (msg) => {
           setRunning(false)
+          setOutput(committedOutputRef.current)
           setError(msg)
         },
       },
@@ -102,6 +123,7 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
 
   const stop = () => {
     abortRef.current?.abort()
+    setOutput(committedOutputRef.current)
     setRunning(false)
   }
 
@@ -192,12 +214,13 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
                 <Sparkles className="h-4 w-4" /> Analyze
               </Button>
             )}
-            {running && (
-              <span className="flex items-center gap-1.5 text-sm text-slate-500">
-                <Loader2 className="h-4 w-4 animate-spin" /> Thinking…
-              </span>
-            )}
           </div>
+
+          <ThinkingDisclosure
+            summary={thinking.summary}
+            thinking={thinking.text}
+            running={running}
+          />
 
           {error && (
             <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
@@ -205,13 +228,9 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
             </div>
           )}
 
-          {(output || running) && (
+          {output && (
             <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
-              {output ? (
-                <MarkdownView>{output}</MarkdownView>
-              ) : (
-                <p className="text-sm text-slate-400">Waiting for the model…</p>
-              )}
+              <MarkdownView>{output}</MarkdownView>
             </div>
           )}
         </CardBody>

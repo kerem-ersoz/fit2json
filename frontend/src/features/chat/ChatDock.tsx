@@ -26,6 +26,7 @@ import { useVisualViewportFrame } from '../../lib/useVisualViewportFrame'
 import { Button } from '../../components/ui/Button'
 import { MarkdownView } from '../../components/ui/Markdown'
 import { Sheet } from '../../components/ui/Sheet'
+import { ThinkingDisclosure } from '../../components/ui/ThinkingDisclosure'
 import { InfographicView } from '../analyze/InfographicView'
 import { CUSTOM_MODEL, useChat, type Msg } from './ChatProvider'
 
@@ -617,11 +618,6 @@ function ChatView({
                 )}
               </div>
             </div>
-            {chat.running && (
-              <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Thinking…
-              </p>
-            )}
           </div>
         </div>
       ) : (
@@ -656,11 +652,6 @@ function ChatView({
               </Button>
             )}
           </div>
-          {chat.running && (
-            <p className="mt-1.5 flex items-center gap-1.5 text-xs text-slate-500">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Thinking…
-            </p>
-          )}
         </div>
       )}
 
@@ -766,7 +757,11 @@ const ChatTranscript = memo(function ChatTranscript({
         ) : (
           <div className="space-y-5">
             {messages.map((message) => (
-              <MessageBubble key={message.id} msg={message} running={running} />
+              <MessageBubble
+                key={message.id}
+                msg={message}
+                running={running && message.id === messages[messages.length - 1]?.id}
+              />
             ))}
             {error && (
               <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
@@ -1044,10 +1039,14 @@ const MessageBubble = memo(function MessageBubble({
   return (
     <div className="min-w-0">
       {msg.steps && msg.steps.length > 0 && <StepList steps={msg.steps} running={running} />}
+      <ThinkingDisclosure
+        summary={msg.thinkingSummary}
+        thinking={msg.thinking}
+        running={running}
+        className="mb-3"
+      />
       {msg.content ? (
         <MarkdownView>{msg.content}</MarkdownView>
-      ) : !msg.steps?.length && running ? (
-        <p className="text-sm text-slate-400">Waiting for the model…</p>
       ) : null}
     </div>
   )
