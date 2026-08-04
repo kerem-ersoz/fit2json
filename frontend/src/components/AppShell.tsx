@@ -111,16 +111,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation()
   const isAnalyze = location.pathname === '/analyze' || location.pathname === '/analyze/'
   const shellRef = useRef<HTMLDivElement>(null)
-  useVisualViewportFrame(shellRef, isAnalyze)
+  useVisualViewportFrame(shellRef)
 
   return (
     <div
       ref={shellRef}
-      className={clsx(
-        isAnalyze
-          ? 'fixed inset-x-0 top-0 flex h-dvh flex-col overflow-hidden overscroll-none lg:flex-row'
-          : 'min-h-full lg:flex',
-      )}
+      className="fixed inset-x-0 top-0 flex h-dvh flex-col overflow-hidden overscroll-none lg:flex-row"
     >
       {/* Desktop sidebar */}
       <aside className="hidden w-64 shrink-0 flex-col border-r border-slate-200 bg-white lg:flex">
@@ -168,7 +164,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       </header>
 
       {/* Main content */}
-      <main className={clsx('min-w-0 flex-1', isAnalyze && 'min-h-0 overflow-hidden')}>
+      <main
+        className={clsx(
+          'min-h-0 min-w-0 flex-1',
+          isAnalyze ? 'overflow-hidden' : 'overflow-y-auto overscroll-contain',
+        )}
+      >
         <div
           className={clsx(
             'mx-auto px-4 sm:px-6 lg:px-8',
@@ -183,7 +184,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       {/* Mobile bottom tab bar */}
       <nav
-        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-slate-200 bg-white/95 backdrop-blur lg:hidden"
+        className="absolute inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-slate-200 bg-white/95 backdrop-blur lg:hidden"
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
         {NAV.map(({ to, label, Icon, end }) => (
