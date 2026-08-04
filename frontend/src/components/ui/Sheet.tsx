@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { usePrefersReducedMotion } from '../../lib/usePrefersReducedMotion'
+import { useVisualViewportFrame } from '../../lib/useVisualViewportFrame'
 
 /**
  * A focused overlay surface: a right-anchored slide-over on desktop, a bottom sheet on
@@ -34,7 +35,9 @@ export function Sheet({
 }) {
   const [mounted, setMounted] = useState(false)
   const closeRef = useRef<HTMLButtonElement>(null)
+  const frameRef = useRef<HTMLDivElement>(null)
   const reduced = usePrefersReducedMotion()
+  useVisualViewportFrame(frameRef)
 
   useEffect(() => {
     setMounted(true)
@@ -59,7 +62,10 @@ export function Sheet({
   const shown = mounted || reduced
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-stretch sm:justify-end">
+    <div
+      ref={frameRef}
+      className="fixed inset-0 z-50 flex items-end justify-center sm:items-stretch sm:justify-end"
+    >
       <button
         type="button"
         aria-hidden="true"

@@ -5,7 +5,7 @@ backend that ships with the `fit2json` package (`fit2json serve`).
 
 ## Prerequisites
 
-- Node 18+ and npm
+- Node 20+ and npm
 - The backend installed with web extras: `pip install -e '.[web]'` (from the repo root)
 
 ## Develop (two processes, hot reload)
@@ -36,6 +36,17 @@ URL, never a token or other secret.
 
 Both servers already bind all interfaces. Start the backend with `--host 0.0.0.0`,
 then open `http://<your-laptop-ip>:5173` from a phone on the same Wi-Fi.
+
+### Run the iOS WebKit regression
+
+The Playwright suite uses an iPhone WebKit profile to exercise keyboard viewport
+changes across Analyze, the chat drawer, and sheets.
+
+```bash
+cd frontend
+npx playwright install webkit
+npm run test:e2e:ios
+```
 
 ## One-command run (built SPA served by the API)
 
