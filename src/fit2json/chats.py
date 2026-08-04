@@ -122,7 +122,7 @@ class ChatStore:
             return None
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             return None
         return data if isinstance(data, dict) else None
 
@@ -132,9 +132,11 @@ class ChatStore:
             return []
         summaries: List[Dict[str, Any]] = []
         for path in self.root.glob("*.json"):
+            if path.name.startswith("._"):
+                continue
             try:
                 doc = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
                 continue
             if not isinstance(doc, dict):
                 continue

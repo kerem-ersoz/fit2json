@@ -13,12 +13,16 @@ Sends workout JSON plus a custom prompt to a pluggable backend:
 from __future__ import annotations
 
 import json
+import os
+import queue
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional
 
 import click
 
@@ -259,6 +263,53 @@ def run_copilot(
     return "".join(chunks)
 
 
+def _kill_windows_process_tree(proc: subprocess.Popen) -> None:
+    """Force-stop one Windows process tree by exact PID."""
+    try:
+        result = subprocess.run(
+            ["taskkill.exe", "/PID", str(proc.pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        result = None
+    if result is None or (result.returncode != 0 and proc.poll() is None):
+        proc.kill()
+
+
+def _terminate_process_group(proc: subprocess.Popen) -> None:
+    """Stop Copilot and any child process it spawned."""
+    if proc.poll() is not None:
+        return
+
+    try:
+        if os.name == "nt":
+            proc.send_signal(getattr(signal, "CTRL_BREAK_EVENT", signal.SIGTERM))
+        else:
+            os.killpg(proc.pid, signal.SIGTERM)
+    except (OSError, ValueError):
+        try:
+            if os.name == "nt":
+                _kill_windows_process_tree(proc)
+            else:
+                proc.terminate()
+        except OSError:
+            return
+
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        try:
+            if os.name == "nt":
+                _kill_windows_process_tree(proc)
+            else:
+                os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            return
+        proc.wait()
+
+
 def stream_copilot(
     prompt: str,
     workout_paths: List[Path],
@@ -270,6 +321,7 @@ def stream_copilot(
     athlete_profile: Optional[str] = None,
     system_prompt: Optional[str] = None,
     final_instruction: Optional[str] = None,
+    keepalive_interval: Optional[float] = None,
 ) -> Iterator[str]:
     """Yield analysis text chunks from the GitHub Copilot CLI subprocess.
 
@@ -331,16 +383,74 @@ def stream_copilot(
     for d in sorted(allow_dirs):
         cmd += ["--add-dir", d]
 
+    group_kwargs: Dict[str, Any]
+    if os.name == "nt":
+        group_kwargs = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    else:
+        group_kwargs = {"start_new_session": True}
+
     proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+        **group_kwargs,
     )
-    assert proc.stdout is not None
-    for line in proc.stdout:
-        yield line
-    proc.wait()
-    if proc.returncode != 0:
-        err = proc.stderr.read() if proc.stderr else ""
-        raise click.ClickException(f"copilot CLI failed (exit {proc.returncode}): {err.strip()}")
+    stdout = proc.stdout
+    assert stdout is not None
+    completed = False
+    reader: Optional[threading.Thread] = None
+    heartbeat = keepalive_interval if keepalive_interval and keepalive_interval > 0 else None
+
+    try:
+        if heartbeat is None:
+            for line in stdout:
+                yield line
+        else:
+            messages: queue.Queue = queue.Queue()
+
+            def read_stdout() -> None:
+                try:
+                    for line in stdout:
+                        messages.put(("line", line))
+                except (OSError, ValueError) as exc:
+                    messages.put(("error", exc))
+                finally:
+                    messages.put(("end", None))
+
+            reader = threading.Thread(
+                target=read_stdout,
+                name="fit2json-copilot-stdout",
+                daemon=True,
+            )
+            reader.start()
+
+            while True:
+                try:
+                    kind, value = messages.get(timeout=heartbeat)
+                except queue.Empty:
+                    # Empty chunks are transport keepalives. CLI callers ignore them; web
+                    # routes translate them into SSE ping events.
+                    yield ""
+                    continue
+                if kind == "line":
+                    yield value
+                elif kind == "error":
+                    raise value
+                else:
+                    break
+
+        returncode = proc.wait()
+        completed = True
+        if returncode != 0:
+            err = proc.stderr.read() if proc.stderr else ""
+            raise click.ClickException(f"copilot CLI failed (exit {returncode}): {err.strip()}")
+    finally:
+        if not completed:
+            _terminate_process_group(proc)
+        if reader is not None:
+            reader.join(timeout=1)
 
 
 # ── OpenAI-compatible backend (Ollama / LM Studio / custom) ─────────────────────

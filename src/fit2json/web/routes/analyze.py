@@ -24,7 +24,7 @@ from fit2json.memory import MemoryStore
 from fit2json.web import services
 from fit2json.web.config import get_settings
 from fit2json.web.schemas import AnalyzeRequest
-from fit2json.web.sse import SSE_HEADERS
+from fit2json.web.sse import SSE_HEADERS, SSE_HEARTBEAT_SECONDS, stream_text_events
 from fit2json.web.sse import sse as _sse
 
 router = APIRouter(tags=["analyze"])
@@ -41,6 +41,7 @@ def _stream_text(backend: str, prompt: str, model, reasoning_effort, athlete_pro
             silent=True,
             reasoning_effort=reasoning_effort or None,
             athlete_profile=athlete_profile,
+            keepalive_interval=SSE_HEARTBEAT_SECONDS,
         )
     if backend in analyzer.LOCAL_BACKENDS:
         url, key = analyzer.LOCAL_BACKENDS[backend]
@@ -108,6 +109,7 @@ def _freeform_event_gen(req: AnalyzeRequest, resolved: str) -> Iterator[str]:
                 reasoning_effort=req.reasoning_effort or None,
                 library_dir=settings.library_dir,
                 athlete_profile=athlete_profile,
+                keepalive_interval=SSE_HEARTBEAT_SECONDS,
             )
         if resolved in analyzer.LOCAL_BACKENDS:
             url, key = analyzer.LOCAL_BACKENDS[resolved]
@@ -124,9 +126,7 @@ def _freeform_event_gen(req: AnalyzeRequest, resolved: str) -> Iterator[str]:
     yield _sse("start", {"backend": resolved})
     chunks: List[str] = []
     try:
-        for chunk in build_stream():
-            chunks.append(chunk)
-            yield _sse("delta", {"text": chunk})
+        yield from stream_text_events(build_stream(), chunks)
     except Exception as exc:
         yield _sse("error", {"message": getattr(exc, "message", None) or str(exc)})
         return
@@ -157,6 +157,7 @@ def _single_event_gen(req: AnalyzeRequest, resolved: str, found_one) -> Iterator
                 silent=True,
                 reasoning_effort=req.reasoning_effort,
                 athlete_profile=athlete_profile,
+                keepalive_interval=SSE_HEARTBEAT_SECONDS,
             )
         if resolved in analyzer.LOCAL_BACKENDS:
             url, key = analyzer.LOCAL_BACKENDS[resolved]
@@ -179,9 +180,7 @@ def _single_event_gen(req: AnalyzeRequest, resolved: str, found_one) -> Iterator
     yield _sse("start", {"backend": resolved})
     chunks: List[str] = []
     try:
-        for chunk in build_stream():
-            chunks.append(chunk)
-            yield _sse("delta", {"text": chunk})
+        yield from stream_text_events(build_stream(), chunks)
     except Exception as exc:  # analyzer raises click.ClickException on failure
         yield _sse("error", {"message": getattr(exc, "message", None) or str(exc)})
         return
@@ -220,9 +219,30 @@ def _multi_event_gen(req: AnalyzeRequest, resolved: str, found, ids: List[str]) 
                 aid, resolved, req.model, req.reasoning_effort, workout_prompt
             )
             reused = existing is not None
-            text = existing if reused else services.generate_workout_analysis(
-                activity, path, resolved, req.model, req.reasoning_effort, workout_prompt, save=True
-            )
+            if reused:
+                text = existing
+            else:
+                map_chunks: List[str] = []
+                yield from stream_text_events(
+                    services.stream_workout_analysis(
+                        activity,
+                        path,
+                        resolved,
+                        req.model,
+                        req.reasoning_effort,
+                        workout_prompt,
+                        keepalive_interval=SSE_HEARTBEAT_SECONDS,
+                    ),
+                    map_chunks,
+                )
+                text = services.record_workout_analysis(
+                    activity,
+                    "".join(map_chunks),
+                    resolved,
+                    req.model,
+                    req.reasoning_effort,
+                    workout_prompt,
+                )
         except Exception as exc:
             yield _sse("error", {"message": getattr(exc, "message", None) or str(exc)})
             return
@@ -239,9 +259,10 @@ def _multi_event_gen(req: AnalyzeRequest, resolved: str, found, ids: List[str]) 
     yield _sse("reduce", {"count": total})
     chunks: List[str] = []
     try:
-        for chunk in _stream_text(resolved, synth, req.model, req.reasoning_effort, athlete_profile):
-            chunks.append(chunk)
-            yield _sse("delta", {"text": chunk})
+        yield from stream_text_events(
+            _stream_text(resolved, synth, req.model, req.reasoning_effort, athlete_profile),
+            chunks,
+        )
     except Exception as exc:
         yield _sse("error", {"message": getattr(exc, "message", None) or str(exc)})
         return

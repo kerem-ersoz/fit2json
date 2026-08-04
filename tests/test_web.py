@@ -289,6 +289,16 @@ def test_chats_missing_returns_404(client):
     assert client.get("/api/chats/nope").status_code == 404
 
 
+def test_chat_list_ignores_appledouble_files(client, tmp_path):
+    chats_dir = tmp_path / "chats"
+    chats_dir.mkdir(parents=True, exist_ok=True)
+    (chats_dir / "._copied-chat.json").write_bytes(b"\x00\x05\x16\x07AppleDouble\x00\xa3")
+
+    r = client.get("/api/chats")
+    assert r.status_code == 200
+    assert r.json() == {"chats": []}
+
+
 def test_chat_id_is_path_safe(client, tmp_path):
     # An id with unsafe characters is sanitized to a single plain filename inside the
     # chats dir — no subdirectories, nothing escaping the directory.
@@ -327,6 +337,27 @@ def test_analyze_freeform_no_selection(client, monkeypatch):
     assert client.get("/api/memory").json()["entries"] == []
 
 
+def test_analyze_emits_keepalive_while_copilot_is_silent(client, monkeypatch):
+    from fit2json import analyzer
+    from fit2json.web.sse import SSE_HEARTBEAT_SECONDS
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+    captured: dict = {}
+
+    def fake_stream(*args, keepalive_interval=None, **kwargs):
+        captured["keepalive_interval"] = keepalive_interval
+        yield ""
+        yield "Finished"
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+
+    r = client.post("/api/analyze", json={"prompt": "Review my latest run"})
+    assert r.status_code == 200
+    assert "event: ping" in r.text
+    assert "event: done" in r.text
+    assert captured["keepalive_interval"] == SSE_HEARTBEAT_SECONDS
+
+
 def test_analyze_multi_workout_map_reduce(client, monkeypatch):
     """2+ workouts → per-workout building blocks, then a synthesis over them that isn't saved."""
     from fit2json import analyzer
@@ -337,11 +368,17 @@ def test_analyze_multi_workout_map_reduce(client, monkeypatch):
     monkeypatch.setattr(services, "latest_compatible_analysis", lambda *a, **k: None)
     gen = {"n": 0}
 
-    def fake_generate(activity, path, backend, model, reasoning_effort, prompt, save=True):
+    def fake_map_stream(*args, **kwargs):
         gen["n"] += 1
-        return f"per-workout analysis {gen['n']}"
+        yield ""
+        yield f"per-workout analysis {gen['n']}"
 
-    monkeypatch.setattr(services, "generate_workout_analysis", fake_generate)
+    monkeypatch.setattr(services, "stream_workout_analysis", fake_map_stream)
+    monkeypatch.setattr(
+        services,
+        "record_workout_analysis",
+        lambda activity, text, backend, model, reasoning_effort, prompt: text,
+    )
 
     def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False, reasoning_effort=None, **kwargs):
         # The synthesis reasons over the per-workout analyses, not the raw workout files.
@@ -356,11 +393,41 @@ def test_analyze_multi_workout_map_reduce(client, monkeypatch):
     r = client.post("/api/analyze", json={"activity_ids": [aid, aid], "prompt": "compare"})
     assert r.status_code == 200
     body = r.text
-    assert "event: step" in body and "event: delta" in body and "event: done" in body
+    assert "event: step" in body and "event: ping" in body
+    assert "event: delta" in body and "event: done" in body
     assert "The second was harder." in body
     assert gen["n"] == 2
     # The nested synthesis is not written to the corpus.
     assert client.get("/api/memory").json()["entries"] == []
+
+
+def test_workout_analysis_cache_failure_keeps_generated_text(client, monkeypatch, tmp_path, caplog):
+    from fit2json.web import services
+
+    aid = client.get("/api/activities").json()[0]["id"]
+    activity = services.get_library().get(aid)
+    assert activity is not None
+
+    class BrokenStore:
+        root = tmp_path / "memory"
+
+        @staticmethod
+        def record(*args, **kwargs):
+            raise OSError("disk unavailable")
+
+    monkeypatch.setattr(services, "_memory_store", lambda: BrokenStore())
+
+    with caplog.at_level("WARNING", logger="fit2json.web.services"):
+        text = services.record_workout_analysis(
+            activity,
+            "generated block",
+            "copilot",
+            "claude-opus-5",
+            "high",
+        )
+
+    assert text == "generated block"
+    assert "Could not cache generated workout analysis" in caplog.text
 
 
 def test_analyze_reuses_compatible_analysis(client, monkeypatch):
@@ -374,7 +441,7 @@ def test_analyze_reuses_compatible_analysis(client, monkeypatch):
     def no_generate(*a, **k):
         raise AssertionError("should not regenerate when a compatible analysis exists")
 
-    monkeypatch.setattr(services, "generate_workout_analysis", no_generate)
+    monkeypatch.setattr(services, "stream_workout_analysis", no_generate)
 
     def fake_stream(prompt, workout_paths, memory_dir=None, model=None, silent=False, reasoning_effort=None, **kwargs):
         assert "REUSED BLOCK" in prompt
