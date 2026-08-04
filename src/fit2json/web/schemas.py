@@ -124,6 +124,21 @@ class ChatSave(BaseModel):
     messages: List[ChatMessage] = Field(default_factory=list)
 
 
+class ChatRename(BaseModel):
+    title: str = Field(min_length=1, max_length=81)
+
+
+class AnalysisRunState(BaseModel):
+    """Durable state for the latest server-owned analysis in a chat."""
+
+    id: str
+    assistant_message_id: Optional[str] = None
+    status: str
+    error: Optional[str] = None
+    started_at: str
+    finished_at: Optional[str] = None
+
+
 class Chat(BaseModel):
     """A full persisted chat session, including its messages."""
 
@@ -136,6 +151,7 @@ class Chat(BaseModel):
     reasoning_effort: str = ""
     activity_ids: List[str] = Field(default_factory=list)
     messages: List[ChatMessage] = Field(default_factory=list)
+    analysis_run: Optional[AnalysisRunState] = None
 
 
 class ChatSummary(BaseModel):
@@ -149,7 +165,27 @@ class ChatSummary(BaseModel):
     backend: str = ""
     model: str = ""
     activity_ids: List[str] = Field(default_factory=list)
+    analysis_status: Optional[str] = None
 
 
 class ChatList(BaseModel):
     chats: List[ChatSummary]
+
+
+class AnalysisRunStart(BaseModel):
+    """Start one reconnectable analysis, optionally attached to a saved chat."""
+
+    run_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._-]+$")
+    analysis: AnalyzeRequest
+    chat_id: Optional[str] = None
+    assistant_message_id: Optional[str] = None
+    chat: Optional[ChatSave] = None
+
+
+class AnalysisRunInfo(BaseModel):
+    id: str
+    status: str
+    error: Optional[str] = None
+    last_event_id: int = 0
+    created_at: str
+    finished_at: Optional[str] = None

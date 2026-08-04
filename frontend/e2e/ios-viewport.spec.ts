@@ -227,41 +227,52 @@ test('keeps touch form controls above the iOS focus-zoom threshold', async ({ pa
   expect(fontSizes.every((size) => size >= 16)).toBe(true)
 })
 
-test('recovers when an analysis stream closes without a terminal event', async ({ page }) => {
-  let savedBeforeAnalysis = false
+test('reconnects to a background analysis without starting it twice', async ({ page }) => {
+  let runId = ''
+  let startCalls = 0
+  let eventConnections = 0
 
-  await page.route('**/api/chats/*', async (route) => {
+  await page.route('**/api/analysis-runs', async (route) => {
     const body = route.request().postDataJSON() as {
-      title?: string
-      backend?: string
-      model?: string
-      reasoning_effort?: string
-      activity_ids: string[]
-      messages: { id: string; role: string; content: string }[]
+      run_id: string
+      chat: { messages: { role: string; content: string }[] }
     }
-    expect(body.messages).toHaveLength(1)
-    savedBeforeAnalysis = true
-    const id = new URL(route.request().url()).pathname.split('/').pop() ?? 'chat'
+    startCalls += 1
+    runId = body.run_id
+    expect(body.chat.messages).toHaveLength(1)
     await route.fulfill({
       json: {
-        id,
-        title: body.title ?? body.messages[0].content,
+        id: runId,
+        status: 'running',
+        error: null,
+        last_event_id: 0,
         created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        backend: body.backend ?? '',
-        model: body.model ?? '',
-        reasoning_effort: body.reasoning_effort ?? '',
-        activity_ids: body.activity_ids,
-        messages: body.messages,
+        finished_at: null,
       },
     })
   })
-  await page.route('**/api/analyze', async (route) => {
-    expect(savedBeforeAnalysis).toBe(true)
+  await page.route('**/api/analysis-runs/*/events?*', async (route) => {
+    eventConnections += 1
+    const url = new URL(route.request().url())
+    expect(url.pathname).toContain(runId)
+    if (eventConnections === 1) {
+      expect(url.searchParams.get('after')).toBe('0')
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body:
+          'id: 1\nevent: start\ndata: {"backend":"ollama"}\n\n' +
+          'id: 2\nevent: delta\ndata: {"text":"Part one "}\n\n',
+      })
+      return
+    }
+    expect(url.searchParams.get('after')).toBe('2')
     await route.fulfill({
       status: 200,
       contentType: 'text/event-stream',
-      body: 'event: start\ndata: {"backend":"copilot"}\n\nevent: ping\ndata: {}\n\n',
+      body:
+        'id: 3\nevent: delta\ndata: {"text":"part two."}\n\n' +
+        'id: 4\nevent: done\ndata: {"chars":18,"saved":null,"backend":"ollama"}\n\n',
     })
   })
 
@@ -269,9 +280,9 @@ test('recovers when an analysis stream closes without a terminal event', async (
   await page.getByRole('textbox', { name: 'Message' }).fill('Review my latest run')
   await page.getByRole('button', { name: 'Send' }).click()
 
-  await expect(page.getByRole('alert')).toContainText(
-    'The connection closed before the response finished.',
-  )
-  await expect(page.getByText('Thinking…')).toBeHidden()
+  await expect(page.getByText('Part one part two.')).toBeVisible()
+  expect(startCalls).toBe(1)
+  expect(eventConnections).toBe(2)
+  await expect(page.getByText('Running in the background…')).toBeHidden()
   await expect(page.getByRole('button', { name: 'Send' })).toBeVisible()
 })

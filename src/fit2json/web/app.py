@@ -8,8 +8,9 @@ reverse proxy without code changes.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
+from typing import AsyncIterator, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from fit2json import __version__
 from fit2json.web import BRAND_NAME
+from fit2json.web.analysis_runs import get_analysis_run_registry
 from fit2json.web.config import get_settings
 from fit2json.web.routes import (
     activities,
@@ -34,8 +36,21 @@ from fit2json.web.routes import (
 def create_app() -> FastAPI:
     settings = get_settings()
     root_path = "" if settings.base_path == "/" else settings.base_path.rstrip("/")
+    analysis_runs = get_analysis_run_registry(settings.chats_dir)
 
-    app = FastAPI(title=f"{BRAND_NAME} API", version=__version__, root_path=root_path)
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            analysis_runs.shutdown()
+
+    app = FastAPI(
+        title=f"{BRAND_NAME} API",
+        version=__version__,
+        root_path=root_path,
+        lifespan=lifespan,
+    )
 
     app.add_middleware(
         CORSMiddleware,

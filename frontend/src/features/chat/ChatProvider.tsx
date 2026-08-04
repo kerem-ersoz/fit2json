@@ -9,7 +9,16 @@ import {
   type ReactNode,
 } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, streamAnalyze, type ChatSummary, type MapStep } from '../../lib/api'
+import {
+  api,
+  cancelAnalysisRun,
+  newAnalysisRunId,
+  startAnalysisRun,
+  streamAnalysisRun,
+  type AnalysisRunInfo,
+  type ChatSummary,
+  type MapStep,
+} from '../../lib/api'
 
 /** A single conversation turn as held in memory (steps are live-only, not persisted). */
 export interface Msg {
@@ -33,7 +42,10 @@ interface SaveSnapshot {
 }
 
 let seq = 0
-const uid = () => `m${++seq}`
+const uid = () => {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `m-${crypto.randomUUID()}`
+  return `m-${Date.now()}-${++seq}-${Math.random().toString(36).slice(2, 8)}`
+}
 
 function newChatId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
@@ -51,6 +63,7 @@ interface ChatContextValue {
   title: string
   messages: Msg[]
   running: boolean
+  stopping: boolean
   error: string | null
 
   // Attached workouts — the single source of truth, shared with the Analyze page.
@@ -95,6 +108,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [title, setTitle] = useState('')
   const [messages, setMessages] = useState<Msg[]>([])
   const [running, setRunning] = useState(false)
+  const [stopping, setStopping] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activityIds, setActivityIdsState] = useState<string[]>([])
 
@@ -105,6 +119,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [workoutPrompt, setWorkoutPrompt] = useState<string | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
+  const runIdRef = useRef<string | null>(null)
+  const assistantIdRef = useRef<string | null>(null)
+  const loadGenerationRef = useRef(0)
   // Tracks the currently-active chat so a background save that resolves after the user
   // switched chats doesn't write its result onto the wrong conversation.
   const chatIdRef = useRef<string | null>(null)
@@ -115,6 +132,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const { data: chatList, isLoading: chatsLoading } = useQuery({
     queryKey: ['chats'],
     queryFn: api.chats,
+    refetchInterval: (query) =>
+      query.state.data?.chats.some(
+        (chat) => chat.analysis_status === 'running' || chat.analysis_status === 'cancelling',
+      )
+        ? 2_000
+        : false,
   })
   const chats = chatList?.chats ?? []
 
@@ -128,7 +151,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     }
   }, [config, workoutPrompt])
 
-  // Abort any in-flight stream on unmount.
+  // Unmounting detaches this browser subscriber; the server-owned run continues.
   useEffect(() => () => abortRef.current?.abort(), [])
 
   const effectiveModel = modelSel === CUSTOM_MODEL ? customModel.trim() : modelSel
@@ -170,10 +193,125 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     [queryClient],
   )
 
+  const followRun = useCallback(
+    async (id: string, runId: string, asstId: string, controller: AbortController) => {
+      const isCurrent = () => chatIdRef.current === id && runIdRef.current === runId
+      const settle = () => {
+        if (runIdRef.current === runId) {
+          runIdRef.current = null
+          assistantIdRef.current = null
+        }
+        if (abortRef.current === controller) abortRef.current = null
+        queryClient.invalidateQueries({ queryKey: ['chats'] })
+      }
+
+      await streamAnalysisRun(
+        runId,
+        {
+          onStep: (step) => {
+            if (!isCurrent()) return
+            setMessages((current) =>
+              current.map((message) => {
+                if (message.id !== asstId) return message
+                const steps = [...(message.steps ?? [])]
+                const index = steps.findIndex((item) => item.index === step.index)
+                if (index === -1) steps.push(step)
+                else steps[index] = step
+                steps.sort((a, b) => a.index - b.index)
+                return { ...message, steps }
+              }),
+            )
+          },
+          onDelta: (text) => {
+            if (!isCurrent()) return
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === asstId
+                  ? { ...message, content: message.content + text }
+                  : message,
+              ),
+            )
+          },
+          onDone: () => {
+            if (isCurrent()) {
+              setRunning(false)
+              setStopping(false)
+              setError(null)
+            }
+            settle()
+          },
+          onError: (message) => {
+            if (isCurrent()) {
+              setRunning(false)
+              setStopping(false)
+              setError(message)
+              setMessages((current) =>
+                current.filter(
+                  (item) =>
+                    !(item.id === asstId && item.content === '' && !(item.steps?.length)),
+                ),
+              )
+            }
+            settle()
+          },
+          onCancelled: () => {
+            if (isCurrent()) {
+              setRunning(false)
+              setStopping(false)
+              setMessages((current) =>
+                current.filter(
+                  (item) =>
+                    !(item.id === asstId && item.content === '' && !(item.steps?.length)),
+                ),
+              )
+            }
+            settle()
+          },
+          onMissing: async () => {
+            if (!isCurrent()) return
+            try {
+              const durable = await api.chat(id)
+              if (!isCurrent()) return
+              setMessages(
+                durable.messages.map((message) => ({
+                  id: message.id || uid(),
+                  role: message.role,
+                  content: message.content,
+                })),
+              )
+              const status = durable.analysis_run
+              setError(
+                status?.status === 'failed'
+                  ? status.error || 'The analysis was interrupted.'
+                  : null,
+              )
+              setRunning(false)
+              setStopping(false)
+            } catch (cause) {
+              if (isCurrent()) {
+                setRunning(false)
+                setStopping(false)
+                setError(
+                  (cause as Error)?.message ??
+                    'The analysis could not be restored after the server restarted.',
+                )
+              }
+            }
+            settle()
+          },
+        },
+        controller.signal,
+      )
+      if (abortRef.current === controller) abortRef.current = null
+    },
+    [queryClient],
+  )
+
   const send = useCallback(
     async (text: string) => {
       const q = text.trim()
       if (!q || running) return
+      loadGenerationRef.current += 1
 
       const id = chatId ?? newChatId()
       if (!chatId) {
@@ -188,10 +326,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const asstId = uid()
       setMessages([...prior, userMsg, { id: asstId, role: 'assistant', content: '', steps: [] }])
       setRunning(true)
+      setStopping(false)
       setError(null)
 
       const controller = new AbortController()
       abortRef.current = controller
+      const runId = newAnalysisRunId()
+      runIdRef.current = runId
+      assistantIdRef.current = asstId
 
       // Freeze the settings this turn is sent with; the save uses these, not live state.
       const snap: SaveSnapshot = {
@@ -208,68 +350,132 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         : q
       const model = !effectiveModel || effectiveModel === 'auto' ? undefined : effectiveModel
 
-      // Save the athlete's turn before inference starts so a killed tab or broken stream
-      // cannot erase the question.
-      await persist(id, [...prior, userMsg], snap)
+      let started: AnalysisRunInfo
+      try {
+        started = await startAnalysisRun(
+          {
+            run_id: runId,
+            analysis: {
+              activity_ids: activityIds,
+              prompt,
+              workout_prompt:
+                workoutPrompt && workoutPrompt.trim() ? workoutPrompt : undefined,
+              backend: backend || undefined,
+              model,
+              reasoning_effort: effort || undefined,
+              no_memory: true,
+            },
+            chat_id: id,
+            assistant_message_id: asstId,
+            chat: {
+              title: snap.title || undefined,
+              backend: snap.backend || undefined,
+              model: snap.model || undefined,
+              reasoning_effort: snap.reasoning_effort || undefined,
+              activity_ids: snap.activity_ids,
+              messages: [...prior, userMsg].map((message) => ({
+                id: message.id,
+                role: message.role,
+                content: message.content,
+              })),
+            },
+          },
+          controller.signal,
+        )
+      } catch (cause) {
+        if (controller.signal.aborted) return
+        const message = (cause as Error)?.message ?? 'Analysis could not be started.'
+        setRunning(false)
+        setStopping(false)
+        setError(message)
+        setMessages((current) => current.filter((item) => item.id !== asstId))
+        runIdRef.current = null
+        assistantIdRef.current = null
+        if (abortRef.current === controller) abortRef.current = null
+        await persist(id, [...prior, userMsg], snap)
+        return
+      }
 
-      let asstContent = ''
-      await streamAnalyze(
-        {
-          activity_ids: activityIds,
-          prompt,
-          workout_prompt: workoutPrompt && workoutPrompt.trim() ? workoutPrompt : undefined,
-          backend: backend || undefined,
-          model,
-          reasoning_effort: effort || undefined,
-          no_memory: true,
-        },
-        {
-          onStep: (s) =>
-            setMessages((m) =>
-              m.map((x) => {
-                if (x.id !== asstId) return x
-                const steps = [...(x.steps ?? [])]
-                const i = steps.findIndex((p) => p.index === s.index)
-                if (i === -1) steps.push(s)
-                else steps[i] = s
-                steps.sort((a, b) => a.index - b.index)
-                return { ...x, steps }
-              }),
-            ),
-          onDelta: (t) => {
-            asstContent += t
-            setMessages((m) => m.map((x) => (x.id === asstId ? { ...x, content: x.content + t } : x)))
-          },
-          onDone: () => {
+      if (started.status === 'completed' || started.status === 'failed' || started.status === 'cancelled') {
+        try {
+          const durable = await api.chat(id)
+          if (chatIdRef.current === id && runIdRef.current === runId) {
+            setTitle(durable.title)
+            setMessages(
+              durable.messages.map((message) => ({
+                id: message.id || uid(),
+                role: message.role,
+                content: message.content,
+              })),
+            )
             setRunning(false)
-            void persist(id, [...prior, userMsg, { id: asstId, role: 'assistant', content: asstContent }], snap)
-          },
-          onError: (msg) => {
+            setStopping(false)
+            setError(started.status === 'failed' ? started.error || 'Analysis failed.' : null)
+            runIdRef.current = null
+            assistantIdRef.current = null
+            if (abortRef.current === controller) abortRef.current = null
+          }
+        } catch (cause) {
+          if (chatIdRef.current === id && runIdRef.current === runId) {
             setRunning(false)
-            setError(msg)
-            setMessages((m) => m.filter((x) => !(x.id === asstId && x.content === '' && !(x.steps && x.steps.length))))
-            const durable = asstContent
-              ? [...prior, userMsg, { id: asstId, role: 'assistant' as const, content: asstContent }]
-              : [...prior, userMsg]
-            void persist(id, durable, snap)
-          },
-        },
-        controller.signal,
-      )
-      if (abortRef.current === controller) abortRef.current = null
+            setStopping(false)
+            setError((cause as Error)?.message ?? 'The finished analysis could not be restored.')
+            runIdRef.current = null
+            assistantIdRef.current = null
+            if (abortRef.current === controller) abortRef.current = null
+          }
+        }
+        queryClient.invalidateQueries({ queryKey: ['chats'] })
+        return
+      }
+
+      if (!snap.title) {
+        setTitle(q.length > 80 ? `${q.slice(0, 80)}…` : q)
+      }
+      queryClient.invalidateQueries({ queryKey: ['chats'] })
+      await followRun(id, runId, asstId, controller)
     },
-    [running, chatId, messages, activityIds, workoutPrompt, backend, effectiveModel, effort, title, persist],
+    [
+      running,
+      chatId,
+      messages,
+      activityIds,
+      workoutPrompt,
+      backend,
+      effectiveModel,
+      effort,
+      title,
+      persist,
+      queryClient,
+      followRun,
+    ],
   )
 
   const stop = useCallback(() => {
-    abortRef.current?.abort()
-    setRunning(false)
-  }, [])
+    const runId = runIdRef.current
+    if (!runId || stopping) return
+    setStopping(true)
+    void cancelAnalysisRun(runId)
+      .then(() => queryClient.invalidateQueries({ queryKey: ['chats'] }))
+      .catch((cause) => {
+        if (runIdRef.current === runId) {
+          setStopping(false)
+          setError((cause as Error)?.message ?? 'The analysis could not be stopped.')
+        }
+      })
+  }, [queryClient, stopping])
 
   const newChat = useCallback(() => {
+    // Starting another conversation only detaches; any active analysis keeps running.
+    loadGenerationRef.current += 1
     abortRef.current?.abort()
+    abortRef.current = null
+    runIdRef.current = null
+    assistantIdRef.current = null
     setRunning(false)
+    setStopping(false)
     setChatId(null)
+    chatIdRef.current = null
     setTitle('')
     setMessages([])
     setError(null)
@@ -278,27 +484,72 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     // question about the same workouts.
   }, [])
 
-  const loadChat = useCallback(async (id: string, openPanel: boolean) => {
-    abortRef.current?.abort()
-    setRunning(false)
-    setError(null)
-    try {
-      const chat = await api.chat(id)
-      setChatId(chat.id)
-      setTitle(chat.title)
-      setMessages(chat.messages.map((m) => ({ id: uid(), role: m.role, content: m.content })))
-      setActivityIdsState(chat.activity_ids ?? [])
-      if (chat.backend) setBackend(chat.backend)
-      setEffort(chat.reasoning_effort ?? '')
-      setModelSel(chat.model || 'auto')
-      setCustomModel('')
-      rememberActive(chat.id)
-      if (openPanel) setOpen(true)
-    } catch {
-      // The stored chat is gone — forget it.
-      rememberActive(null)
-    }
-  }, [])
+  const loadChat = useCallback(
+    async (id: string, openPanel: boolean) => {
+      const generation = ++loadGenerationRef.current
+      abortRef.current?.abort()
+      abortRef.current = null
+      runIdRef.current = null
+      assistantIdRef.current = null
+      setRunning(false)
+      setStopping(false)
+      setError(null)
+      try {
+        const chat = await api.chat(id)
+        if (generation !== loadGenerationRef.current) return
+        chatIdRef.current = chat.id
+        setChatId(chat.id)
+        setTitle(chat.title)
+        const loaded: Msg[] = chat.messages.map((message) => ({
+          id: message.id || uid(),
+          role: message.role,
+          content: message.content,
+        }))
+        const run = chat.analysis_run
+        const active =
+          run != null &&
+          (run.status === 'running' || run.status === 'cancelling') &&
+          !!run.assistant_message_id
+        if (active && run.assistant_message_id) {
+          const pending = loaded.find((message) => message.id === run.assistant_message_id)
+          if (pending) pending.steps = []
+          else {
+            loaded.push({
+              id: run.assistant_message_id,
+              role: 'assistant',
+              content: '',
+              steps: [],
+            })
+          }
+        }
+        setMessages(loaded)
+        setActivityIdsState(chat.activity_ids ?? [])
+        if (chat.backend) setBackend(chat.backend)
+        setEffort(chat.reasoning_effort ?? '')
+        setModelSel(chat.model || 'auto')
+        setCustomModel('')
+        rememberActive(chat.id)
+        if (openPanel) setOpen(true)
+
+        if (active && run?.assistant_message_id) {
+          const controller = new AbortController()
+          abortRef.current = controller
+          runIdRef.current = run.id
+          assistantIdRef.current = run.assistant_message_id
+          setRunning(true)
+          setStopping(run.status === 'cancelling')
+          void followRun(chat.id, run.id, run.assistant_message_id, controller)
+        } else if (run?.status === 'failed' && run.error) {
+          setError(run.error)
+        }
+      } catch {
+        if (generation !== loadGenerationRef.current) return
+        // The stored chat is gone — forget it.
+        rememberActive(null)
+      }
+    },
+    [followRun],
+  )
 
   const resumeChat = useCallback(
     (id: string, options?: { openPanel?: boolean }) => loadChat(id, options?.openPanel ?? true),
@@ -323,22 +574,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const trimmed = next.trim()
       if (!chatId || !trimmed) return
       setTitle(trimmed)
-      const cleaned = messages.map((m) => ({ id: m.id, role: m.role, content: m.content }))
       try {
-        await api.saveChat(chatId, {
-          title: trimmed,
-          backend: backend || undefined,
-          model: effectiveModel || undefined,
-          reasoning_effort: effort || undefined,
-          activity_ids: activityIds,
-          messages: cleaned,
-        })
+        await api.renameChat(chatId, trimmed)
         queryClient.invalidateQueries({ queryKey: ['chats'] })
       } catch {
         /* ignore */
       }
     },
-    [chatId, messages, backend, effectiveModel, effort, activityIds, queryClient],
+    [chatId, queryClient],
   )
 
   // Restore the last active conversation on load (without popping the panel open),
@@ -365,6 +608,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       title,
       messages,
       running,
+      stopping,
       error,
       activityIds,
       setActivityIds,
@@ -395,6 +639,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       title,
       messages,
       running,
+      stopping,
       error,
       activityIds,
       setActivityIds,
