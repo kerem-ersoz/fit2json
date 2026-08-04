@@ -60,10 +60,10 @@ def _init_garmin_client(
     """Return an authenticated Garmin client, reusing a cached session when possible.
 
     First tries to resume from the garth token store (no credentials required). If
-    that fails (missing/expired/revoked tokens), falls back to an email/password
-    login and persists the resulting tokens to ``token_dir`` so later runs can resume
-    without a fresh login — which is what keeps frequent polling from tripping
-    Garmin's CAPTCHA / rate limiting.
+    that fails because the tokens are missing or unusable, falls back to an
+    email/password login and persists the resulting tokens to ``token_dir`` so later
+    runs can resume without a fresh login. Transient connection failures surface
+    immediately so the watch loop retries without attempting an unnecessary login.
     """
     try:
         from garminconnect import (
@@ -89,7 +89,11 @@ def _init_garmin_client(
             f"Garmin rate limit hit while resuming session: {e}. "
             "Wait a while before retrying."
         ) from e
-    except Exception as e:  # noqa: BLE001 - any resume failure falls back to login
+    except GarminConnectConnectionError as e:
+        raise click.ClickException(
+            f"Garmin connection failed while resuming session: {e}"
+        ) from e
+    except Exception as e:  # noqa: BLE001 - remaining resume failures fall back to login
         resume_error = e
 
     # 2) No usable cached session — fall back to a credential login.

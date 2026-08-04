@@ -159,6 +159,25 @@ class TestGarminAuth:
 
         assert "credentials" in str(exc.value).lower()
 
+    def test_resume_connection_error_does_not_fall_back_to_credentials(
+        self, fake_garmin, tmp_path
+    ):
+        fake_garmin.resume_should_fail = True
+        fake_garmin.resume_exc = _ConnError("API Error 521")
+
+        with pytest.raises(click.ClickException) as exc:
+            fetch_garmin_activities(
+                days=1,
+                output_dir=str(tmp_path / "fit"),
+                token_dir=str(tmp_path / "tokens"),
+                interactive=False,
+            )
+
+        message = str(exc.value).lower()
+        assert "connection failed while resuming session" in message
+        assert "credentials" not in message
+        assert len(fake_garmin.instances) == 1
+
 
 # ── Dedup: skip already-downloaded ──────────────────────────────────────────────
 
