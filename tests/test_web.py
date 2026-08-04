@@ -60,6 +60,21 @@ def test_models_copilot(client):
     assert "high" in body["efforts"] and "medium" in body["efforts"]
 
 
+def test_models_copilot_ignores_invalid_memory_files(client, tmp_path, caplog):
+    memory_dir = tmp_path / "memory" / "running"
+    memory_dir.mkdir(parents=True)
+    (memory_dir / "._analysis.md").write_bytes(b"\x00\x05\x16\x07AppleDouble\x00\xa9")
+    (memory_dir / "broken.md").write_bytes(b"---\nentry_id: broken\n\xff")
+
+    with caplog.at_level("WARNING", logger="fit2json.web.services"):
+        r = client.get("/api/models", params={"backend": "copilot"})
+
+    assert r.status_code == 200
+    assert r.json()["models"][0] == "auto"
+    assert "broken.md" in caplog.text
+    assert "._analysis.md" not in caplog.text
+
+
 def test_models_local_backend_unreachable(client):
     r = client.get("/api/models", params={"backend": "ollama"})
     assert r.status_code == 200

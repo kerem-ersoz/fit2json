@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +23,8 @@ from fit2json.output import activity_filename
 from fit2json.profile import load_profile, save_profile
 from fit2json.web import streams as streams_mod
 from fit2json.web.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 def _read_json(path: Path) -> Any:
@@ -634,6 +637,9 @@ def _parse_memory_md(path: Path, root: Path) -> Optional[Dict[str, Any]]:
     """Parse one analysis .md file's front-matter into an index-style entry."""
     try:
         text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        logger.warning("Skipping non-UTF-8 memory file %s: %s", path, exc)
+        return None
     except OSError:
         return None
     if not text.startswith("---"):
@@ -684,6 +690,8 @@ def _all_memory_entries() -> List[Dict[str, Any]]:
     root = store.root
     if root.exists():
         for md in sorted(root.glob("*/*.md")):
+            if md.name.startswith("."):
+                continue
             parsed = _parse_memory_md(md, root)
             if parsed and parsed.get("entry_id") and parsed["entry_id"] not in by_id:
                 by_id[parsed["entry_id"]] = parsed
