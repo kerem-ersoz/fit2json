@@ -168,3 +168,70 @@ test('keeps touch form controls above the iOS focus-zoom threshold', async ({ pa
   expect(fontSizes.length).toBeGreaterThan(0)
   expect(fontSizes.every((size) => size >= 16)).toBe(true)
 })
+
+test('expands model thinking from its one-sentence summary', async ({ page }) => {
+  const summary = 'Reviewing pace and heart-rate evidence'
+  const reasoning =
+    'The opening pace was controlled while heart rate rose gradually. The finish stayed aerobic.'
+  const frames = [
+    `event: start\ndata: ${JSON.stringify({ backend: 'copilot' })}\n\n`,
+    `event: thinking\ndata: ${JSON.stringify({ summary, text: reasoning })}\n\n`,
+    `event: delta\ndata: ${JSON.stringify({ text: 'A controlled aerobic session.' })}\n\n`,
+    `event: replace\ndata: ${JSON.stringify({ text: 'A controlled aerobic session.' })}\n\n`,
+    `event: done\ndata: ${JSON.stringify({ chars: 29, saved: null, backend: 'copilot' })}\n\n`,
+  ]
+  await page.route('**/api/analyze', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: frames.join(''),
+    }),
+  )
+  await page.goto('/analyze')
+
+  const savedChat = page.waitForRequest(
+    (request) => request.method() === 'PUT' && new URL(request.url()).pathname.includes('/api/chats/'),
+  )
+  await page.getByRole('textbox', { name: 'Message' }).fill('How did this session go?')
+  await page.getByRole('button', { name: 'Send' }).tap()
+
+  const disclosure = page.locator('details').filter({ hasText: summary })
+  const detail = page.getByText(reasoning)
+  await expect(disclosure).toBeVisible()
+  expect(await disclosure.evaluate((element) => (element as HTMLDetailsElement).open)).toBe(false)
+  await expect(detail).toBeHidden()
+
+  const trigger = disclosure.locator('summary')
+  expect(await trigger.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44)
+  await trigger.tap()
+
+  await expect(detail).toBeVisible()
+  expect(await disclosure.evaluate((element) => (element as HTMLDetailsElement).open)).toBe(true)
+  await expect(page.getByText('A controlled aerobic session.')).toBeVisible()
+
+  const savedBody = (await savedChat).postDataJSON()
+  expect(savedBody.messages[1].thinking_summary).toBe(summary)
+  expect(savedBody.messages[1].thinking).toBe(reasoning)
+})
+
+test('discards provisional Copilot narration when stopped', async ({ page }) => {
+  const narration = 'I will inspect the workout file.'
+  await page.route('**/api/analyze', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: [
+        `event: start\ndata: ${JSON.stringify({ backend: 'copilot' })}\n\n`,
+        `event: delta\ndata: ${JSON.stringify({ text: narration })}\n\n`,
+      ].join(''),
+    }),
+  )
+  await page.goto('/analyze')
+
+  await page.getByRole('textbox', { name: 'Message' }).fill('Review this workout')
+  await page.getByRole('button', { name: 'Send' }).tap()
+  await expect(page.getByText(narration)).toBeVisible()
+
+  await page.getByRole('button', { name: 'Stop' }).tap()
+  await expect(page.getByText(narration)).toBeHidden()
+})

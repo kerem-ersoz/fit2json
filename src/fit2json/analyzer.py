@@ -18,7 +18,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator, List, Optional
+from typing import TYPE_CHECKING, Callable, Iterator, List, Optional
 
 import click
 
@@ -270,19 +270,26 @@ def stream_copilot(
     athlete_profile: Optional[str] = None,
     system_prompt: Optional[str] = None,
     final_instruction: Optional[str] = None,
+    event_handler: Optional[Callable[[dict], None]] = None,
 ) -> Iterator[str]:
     """Yield analysis text chunks from the GitHub Copilot CLI subprocess.
 
     Streams the CLI's stdout line by line so callers (CLI or web) can consume it
     incrementally. Raises ``click.ClickException`` if the CLI is missing or fails.
 
-    When ``silent`` is True, passes ``--silent`` so the CLI emits *only* the final
-    agent response — no tool-call trace or stats footer. Used by the web UI so saved
-    analyses are clean prose + charts. ``library_dir`` grants the agent access to the
-    whole workout library so it can find relevant workouts itself (freeform mode).
+    When ``silent`` is True, passes ``--silent`` so text-mode output contains only the
+    final agent response — no tool-call trace or stats footer. Structured mode still
+    receives JSON events, then filters durable answer text itself. ``library_dir`` grants
+    the agent access to the whole workout library so it can find relevant workouts itself
+    (freeform mode).
 
     ``system_prompt``/``final_instruction`` override the default coach persona and the
     "write markdown to stdout" trailer — used by the infographic pass to request raw HTML.
+
+    When ``event_handler`` is provided, the CLI emits JSONL session events. Display-safe
+    intent, reasoning, and message events are passed to the handler while this iterator
+    yields only completed root-agent answer text. Tool-call narration stays out of saved
+    analyses even though the web UI can preview and later discard it.
 
     ``--model`` is only passed when ``model`` is given, so an unset model falls back to
     the user's *configured* Copilot default (e.g. Opus). Forcing ``--model auto`` here
@@ -321,6 +328,12 @@ def stream_copilot(
             cmd += ["--context", "long_context"]
     if silent:
         cmd.append("--silent")
+    if event_handler is not None:
+        cmd += [
+            "--output-format", "json",
+            "--stream", "on",
+            "--enable-reasoning-summaries",
+        ]
     if reasoning_effort:
         cmd += ["--reasoning-effort", reasoning_effort]
     allow_dirs = {str(p.parent.resolve()) for p in workout_paths}
@@ -335,12 +348,61 @@ def stream_copilot(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1
     )
     assert proc.stdout is not None
+    stream_error = ""
     for line in proc.stdout:
-        yield line
+        if event_handler is None:
+            yield line
+            continue
+
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise click.ClickException(f"copilot CLI emitted invalid JSONL: {exc}") from exc
+        if not isinstance(event, dict):
+            continue
+
+        event_type = event.get("type")
+        data = event.get("data")
+        if event_type == "session.error" and isinstance(data, dict):
+            stream_error = str(data.get("message") or "Copilot session failed")
+
+        # Sub-agent output belongs in traces, not the athlete-facing answer/thinking panel.
+        if event.get("agentId") or not isinstance(data, dict):
+            continue
+        if event_type in {
+            "assistant.intent",
+            "assistant.reasoning",
+            "assistant.reasoning_delta",
+            "assistant.message_delta",
+            "assistant.message",
+        }:
+            event_handler(event)
+
+        # A completed message with tools is an intermediate tool-call turn. Only no-tool,
+        # response-phase messages are durable answer text.
+        if event_type == "assistant.message":
+            phase = str(data.get("phase") or "")
+            has_tools = bool(data.get("toolRequests"))
+            content = str(data.get("content") or "")
+            if content and not has_tools and phase not in {"thinking", "commentary"}:
+                yield content
+            else:
+                # Hand control back to the SSE adapter so it can discard any provisional
+                # message deltas immediately.
+                yield ""
+        elif event_type in {
+            "assistant.intent",
+            "assistant.reasoning",
+            "assistant.reasoning_delta",
+            "assistant.message_delta",
+        }:
+            yield ""
     proc.wait()
     if proc.returncode != 0:
         err = proc.stderr.read() if proc.stderr else ""
         raise click.ClickException(f"copilot CLI failed (exit {proc.returncode}): {err.strip()}")
+    if stream_error:
+        raise click.ClickException(stream_error)
 
 
 # ── OpenAI-compatible backend (Ollama / LM Studio / custom) ─────────────────────

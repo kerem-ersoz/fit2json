@@ -14,7 +14,7 @@ powerful-model one inside a single synthesis.
 from __future__ import annotations
 
 import json
-from typing import Iterator, List
+from typing import Callable, Iterator, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -30,7 +30,14 @@ from fit2json.web.sse import sse as _sse
 router = APIRouter(tags=["analyze"])
 
 
-def _stream_text(backend: str, prompt: str, model, reasoning_effort, athlete_profile=None) -> Iterator[str]:
+def _stream_text(
+    backend: str,
+    prompt: str,
+    model,
+    reasoning_effort,
+    athlete_profile=None,
+    event_handler: Optional[Callable[[dict], None]] = None,
+) -> Iterator[str]:
     """Stream a model response for a prompt with no attached workout files."""
     if backend == "copilot":
         return analyzer.stream_copilot(
@@ -41,6 +48,7 @@ def _stream_text(backend: str, prompt: str, model, reasoning_effort, athlete_pro
             silent=True,
             reasoning_effort=reasoning_effort or None,
             athlete_profile=athlete_profile,
+            event_handler=event_handler,
         )
     if backend in analyzer.LOCAL_BACKENDS:
         url, key = analyzer.LOCAL_BACKENDS[backend]
@@ -49,6 +57,77 @@ def _stream_text(backend: str, prompt: str, model, reasoning_effort, athlete_pro
             model=model, athlete_profile=athlete_profile,
         )
     raise ValueError(f"Unsupported analysis backend: {backend}")
+
+
+def _model_events(stream: Iterator[str], copilot_events: List[dict]):
+    """Separate durable answer text from live display events.
+
+    Copilot message deltas are shown immediately, then replaced when the complete
+    message reveals whether it was a final answer or an intermediate tool-call turn.
+    Local backends have no structured event queue, so their text remains a normal delta.
+    """
+    committed: List[str] = []
+    reasoning: dict = {}
+    summary = ""
+    structured = False
+
+    def drain_pending():
+        nonlocal summary
+        emitted = []
+        for event in copilot_events:
+            event_type = event.get("type")
+            data = event.get("data") or {}
+            if event_type == "assistant.intent":
+                summary = str(data.get("intent") or "").strip()
+            elif event_type == "assistant.reasoning_delta":
+                reasoning_id = str(data.get("reasoningId") or "reasoning")
+                reasoning[reasoning_id] = reasoning.get(reasoning_id, "") + str(data.get("deltaContent") or "")
+            elif event_type == "assistant.reasoning":
+                reasoning_id = str(data.get("reasoningId") or "reasoning")
+                reasoning[reasoning_id] = str(data.get("content") or "")
+            elif event_type == "assistant.message_delta":
+                text = str(data.get("deltaContent") or "")
+                if text:
+                    emitted.append(("delta", {"text": text}, ""))
+                continue
+            elif event_type == "assistant.message":
+                phase = str(data.get("phase") or "")
+                content = str(data.get("content") or "")
+                accepted = bool(content) and not data.get("toolRequests") and phase not in {"thinking", "commentary"}
+                display = "".join(committed) + (content if accepted else "")
+                emitted.append(("replace", {"text": display}, ""))
+                continue
+            else:
+                continue
+
+            text = "\n\n".join(block.strip() for block in reasoning.values() if block.strip())
+            if summary or text:
+                emitted.append(("thinking", {"summary": summary, "text": text}, ""))
+        copilot_events.clear()
+        return emitted
+
+    for chunk in stream:
+        if copilot_events:
+            structured = True
+            yield from drain_pending()
+        if not chunk:
+            continue
+        committed.append(chunk)
+        yield None, {}, chunk
+        if not structured:
+            yield "delta", {"text": chunk}, ""
+
+    if copilot_events:
+        yield from drain_pending()
+
+
+def _stream_response(stream: Iterator[str], copilot_events: List[dict]):
+    """Yield SSE frames and the committed answer chunks used for persistence."""
+    for event, data, answer_chunk in _model_events(stream, copilot_events):
+        if event:
+            yield _sse(event, data), ""
+        if answer_chunk:
+            yield "", answer_chunk
 
 
 def _synthesis_prompt(blocks, user_prompt: str) -> str:
@@ -95,6 +174,7 @@ def _freeform_event_gen(req: AnalyzeRequest, resolved: str) -> Iterator[str]:
 
     # Personal data from the "You" tab, injected so the model can personalize its analysis.
     athlete_profile = services.get_profile_prompt()
+    copilot_events: List[dict] = []
 
     def build_stream() -> Iterator[str]:
         if resolved == "copilot":
@@ -108,6 +188,7 @@ def _freeform_event_gen(req: AnalyzeRequest, resolved: str) -> Iterator[str]:
                 reasoning_effort=req.reasoning_effort or None,
                 library_dir=settings.library_dir,
                 athlete_profile=athlete_profile,
+                event_handler=copilot_events.append,
             )
         if resolved in analyzer.LOCAL_BACKENDS:
             url, key = analyzer.LOCAL_BACKENDS[resolved]
@@ -124,10 +205,13 @@ def _freeform_event_gen(req: AnalyzeRequest, resolved: str) -> Iterator[str]:
     yield _sse("start", {"backend": resolved})
     chunks: List[str] = []
     try:
-        for chunk in build_stream():
-            chunks.append(chunk)
-            yield _sse("delta", {"text": chunk})
+        for frame, chunk in _stream_response(build_stream(), copilot_events):
+            if frame:
+                yield frame
+            if chunk:
+                chunks.append(chunk)
     except Exception as exc:
+        yield _sse("replace", {"text": "".join(chunks)})
         yield _sse("error", {"message": getattr(exc, "message", None) or str(exc)})
         return
     yield _sse("done", {"chars": len("".join(chunks)), "saved": None, "backend": resolved})
@@ -141,6 +225,7 @@ def _single_event_gen(req: AnalyzeRequest, resolved: str, found_one) -> Iterator
 
     # Personal data from the "You" tab, injected so the model can personalize its analysis.
     athlete_profile = services.get_profile_prompt()
+    copilot_events: List[dict] = []
 
     store = None
     if not req.no_memory:
@@ -157,6 +242,7 @@ def _single_event_gen(req: AnalyzeRequest, resolved: str, found_one) -> Iterator
                 silent=True,
                 reasoning_effort=req.reasoning_effort,
                 athlete_profile=athlete_profile,
+                event_handler=copilot_events.append,
             )
         if resolved in analyzer.LOCAL_BACKENDS:
             url, key = analyzer.LOCAL_BACKENDS[resolved]
@@ -179,10 +265,13 @@ def _single_event_gen(req: AnalyzeRequest, resolved: str, found_one) -> Iterator
     yield _sse("start", {"backend": resolved})
     chunks: List[str] = []
     try:
-        for chunk in build_stream():
-            chunks.append(chunk)
-            yield _sse("delta", {"text": chunk})
+        for frame, chunk in _stream_response(build_stream(), copilot_events):
+            if frame:
+                yield frame
+            if chunk:
+                chunks.append(chunk)
     except Exception as exc:  # analyzer raises click.ClickException on failure
+        yield _sse("replace", {"text": "".join(chunks)})
         yield _sse("error", {"message": getattr(exc, "message", None) or str(exc)})
         return
 
@@ -238,11 +327,23 @@ def _multi_event_gen(req: AnalyzeRequest, resolved: str, found, ids: List[str]) 
     athlete_profile = services.get_profile_prompt()
     yield _sse("reduce", {"count": total})
     chunks: List[str] = []
+    copilot_events: List[dict] = []
     try:
-        for chunk in _stream_text(resolved, synth, req.model, req.reasoning_effort, athlete_profile):
-            chunks.append(chunk)
-            yield _sse("delta", {"text": chunk})
+        stream = _stream_text(
+            resolved,
+            synth,
+            req.model,
+            req.reasoning_effort,
+            athlete_profile,
+            event_handler=copilot_events.append,
+        )
+        for frame, chunk in _stream_response(stream, copilot_events):
+            if frame:
+                yield frame
+            if chunk:
+                chunks.append(chunk)
     except Exception as exc:
+        yield _sse("replace", {"text": "".join(chunks)})
         yield _sse("error", {"message": getattr(exc, "message", None) or str(exc)})
         return
     yield _sse("done", {"chars": len("".join(chunks)), "saved": None, "backend": resolved})

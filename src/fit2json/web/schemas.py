@@ -110,6 +110,8 @@ class ChatMessage(BaseModel):
     id: str
     role: str  # "user" | "assistant"
     content: str
+    thinking_summary: Optional[str] = None
+    thinking: Optional[str] = None
     created_at: Optional[str] = None
 
 

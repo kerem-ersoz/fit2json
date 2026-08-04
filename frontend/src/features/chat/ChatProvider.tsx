@@ -11,11 +11,13 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, streamAnalyze, type ChatSummary, type MapStep } from '../../lib/api'
 
-/** A single conversation turn as held in memory (steps are live-only, not persisted). */
+/** A single conversation turn as held in memory (map steps are live-only). */
 export interface Msg {
   id: string
   role: 'user' | 'assistant'
   content: string
+  thinkingSummary?: string
+  thinking?: string
   steps?: MapStep[]
 }
 
@@ -105,6 +107,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [workoutPrompt, setWorkoutPrompt] = useState<string | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
+  const committedRef = useRef<{ messageId: string; content: string } | null>(null)
   // Tracks the currently-active chat so a background save that resolves after the user
   // switched chats doesn't write its result onto the wrong conversation.
   const chatIdRef = useRef<string | null>(null)
@@ -149,7 +152,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
   const persist = useCallback(
     async (id: string, msgs: Msg[], snap: SaveSnapshot) => {
-      const cleaned = msgs.map((m) => ({ id: m.id, role: m.role, content: m.content }))
+      const cleaned = msgs.map((m) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        thinking_summary: m.thinkingSummary,
+        thinking: m.thinking,
+      }))
       const firstUser = cleaned.find((m) => m.role === 'user')?.content ?? ''
       try {
         const saved = await api.saveChat(id, {
@@ -186,6 +195,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const prior = messages
       const userMsg: Msg = { id: uid(), role: 'user', content: q }
       const asstId = uid()
+      committedRef.current = { messageId: asstId, content: '' }
       setMessages([...prior, userMsg, { id: asstId, role: 'assistant', content: '', steps: [] }])
       setRunning(true)
       setError(null)
@@ -209,6 +219,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const model = !effectiveModel || effectiveModel === 'auto' ? undefined : effectiveModel
 
       let asstContent = ''
+      let asstThinkingSummary = ''
+      let asstThinking = ''
+      let resolvedBackend = backend
       await streamAnalyze(
         {
           activity_ids: activityIds,
@@ -220,6 +233,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           no_memory: true,
         },
         {
+          onStart: (value) => {
+            resolvedBackend = value
+          },
           onStep: (s) =>
             setMessages((m) =>
               m.map((x) => {
@@ -232,16 +248,55 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                 return { ...x, steps }
               }),
             ),
+          onThinking: (info) => {
+            asstThinkingSummary = info.summary
+            asstThinking = info.text
+            setMessages((m) =>
+              m.map((x) =>
+                x.id === asstId
+                  ? {
+                      ...x,
+                      thinkingSummary: info.summary || undefined,
+                      thinking: info.text || undefined,
+                    }
+                  : x,
+              ),
+            )
+          },
           onDelta: (t) => {
             asstContent += t
+            if (resolvedBackend !== 'copilot') {
+              committedRef.current = { messageId: asstId, content: asstContent }
+            }
             setMessages((m) => m.map((x) => (x.id === asstId ? { ...x, content: x.content + t } : x)))
+          },
+          onReplace: (text) => {
+            asstContent = text
+            committedRef.current = { messageId: asstId, content: text }
+            setMessages((m) => m.map((x) => (x.id === asstId ? { ...x, content: text } : x)))
           },
           onDone: () => {
             setRunning(false)
-            void persist(id, [...prior, userMsg, { id: asstId, role: 'assistant', content: asstContent }], snap)
+            committedRef.current = null
+            void persist(
+              id,
+              [
+                ...prior,
+                userMsg,
+                {
+                  id: asstId,
+                  role: 'assistant',
+                  content: asstContent,
+                  thinkingSummary: asstThinkingSummary || undefined,
+                  thinking: asstThinking || undefined,
+                },
+              ],
+              snap,
+            )
           },
           onError: (msg) => {
             setRunning(false)
+            committedRef.current = null
             setError(msg)
             setMessages((m) => m.filter((x) => !(x.id === asstId && x.content === '' && !(x.steps && x.steps.length))))
             void persist(id, [...prior, userMsg], snap)
@@ -255,11 +310,21 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
   const stop = useCallback(() => {
     abortRef.current?.abort()
+    const committed = committedRef.current
+    if (committed) {
+      setMessages((messages) =>
+        messages.map((message) =>
+          message.id === committed.messageId ? { ...message, content: committed.content } : message,
+        ),
+      )
+    }
+    committedRef.current = null
     setRunning(false)
   }, [])
 
   const newChat = useCallback(() => {
     abortRef.current?.abort()
+    committedRef.current = null
     setRunning(false)
     setChatId(null)
     setTitle('')
@@ -272,13 +337,22 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
   const loadChat = useCallback(async (id: string, openPanel: boolean) => {
     abortRef.current?.abort()
+    committedRef.current = null
     setRunning(false)
     setError(null)
     try {
       const chat = await api.chat(id)
       setChatId(chat.id)
       setTitle(chat.title)
-      setMessages(chat.messages.map((m) => ({ id: uid(), role: m.role, content: m.content })))
+      setMessages(
+        chat.messages.map((m) => ({
+          id: uid(),
+          role: m.role,
+          content: m.content,
+          thinkingSummary: m.thinking_summary || undefined,
+          thinking: m.thinking || undefined,
+        })),
+      )
       setActivityIdsState(chat.activity_ids ?? [])
       if (chat.backend) setBackend(chat.backend)
       setEffort(chat.reasoning_effort ?? '')
@@ -315,7 +389,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const trimmed = next.trim()
       if (!chatId || !trimmed) return
       setTitle(trimmed)
-      const cleaned = messages.map((m) => ({ id: m.id, role: m.role, content: m.content }))
+      const cleaned = messages.map((m) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        thinking_summary: m.thinkingSummary,
+        thinking: m.thinking,
+      }))
       try {
         await api.saveChat(chatId, {
           title: trimmed,

@@ -44,6 +44,33 @@ class TestSave:
         doc = store.save("c", {"messages": [{"id": "x", "role": "system", "content": "nope"}]})
         assert doc["messages"] == []
 
+    def test_persists_thinking_on_assistant_messages_only(self, tmp_path):
+        store = ChatStore(tmp_path)
+        doc = store.save(
+            "c",
+            {
+                "messages": [
+                    {
+                        "id": "m1",
+                        "role": "user",
+                        "content": "How was the run?",
+                        "thinking": "User-supplied trace",
+                    },
+                    {
+                        "id": "m2",
+                        "role": "assistant",
+                        "content": "Well controlled.",
+                        "thinking_summary": "Checking pace and heart rate",
+                        "thinking": "The pace was even and heart rate stayed aerobic.",
+                    },
+                ]
+            },
+        )
+
+        assert "thinking" not in doc["messages"][0]
+        assert doc["messages"][1]["thinking_summary"] == "Checking pace and heart rate"
+        assert doc["messages"][1]["thinking"] == "The pace was even and heart rate stayed aerobic."
+
     def test_persists_settings_and_activity_ids(self, tmp_path):
         store = ChatStore(tmp_path)
         doc = store.save(
@@ -108,4 +135,3 @@ class TestSanitizeId:
 
     def test_keeps_safe_chars(self):
         assert sanitize_id("chat_2024-01-01.abc") == "chat_2024-01-01.abc"
-
