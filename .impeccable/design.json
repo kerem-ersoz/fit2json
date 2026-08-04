@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-08-01T06:08:44Z",
+  "generatedAt": "2026-08-04T04:24:28Z",
   "title": "Design System: FitSift",
   "extensions": {
     "colorMeta": {
@@ -22,6 +22,23 @@
         "canonical": "#b91c1c",
         "tonalRamp": ["#7f1d1d", "#991b1b", "#b91c1c", "#dc2626", "#ef4444", "#f87171", "#fecaca", "#fef2f2"]
       }
+    },
+    "darkMode": {
+      "strategy": "system",
+      "mediaQuery": "(prefers-color-scheme: dark)",
+      "colors": {
+        "canvas": "#000000",
+        "surface": "#000000",
+        "ink": "#f8fafc",
+        "copy": "#cbd5e1",
+        "muted": "#94a3b8",
+        "divider": "rgb(255 255 255 / 0.22)",
+        "dividerSoft": "rgb(255 255 255 / 0.14)",
+        "dividerStrong": "rgb(255 255 255 / 0.34)",
+        "signalGreen": "#34d399",
+        "action": "#047857"
+      },
+      "surfaceRule": "Neutral surfaces remain true black; use translucent white hairlines instead of gray panels."
     },
     "typographyMeta": {
       "display": { "displayName": "Display", "purpose": "Page titles on surfaces that need one (e.g. 'Add workouts'). The largest type in the app; compact, never a marketing hero." },
@@ -114,16 +131,16 @@
     "northStar": "The Quiet Instrument",
     "overview": "FitSift is a precise measuring instrument for one athlete's training. The chassis is calm matte chrome — near-white surfaces, hairline dividers, a single restrained green — and the readout is the workout data itself: the metrics, the route, the charts, the AI write-up. The interface never competes with the numbers. It holds still so the data can speak, the way a good scale or a watchmaker's loupe disappears in the hand and leaves only the reading.\n\nRestraint is the default, but the instrument is not lifeless. Expression is rationed and spent precisely where it aids comprehension: the sport glyph on an activity card, the emerald focus ring answering a keystroke, the route map, and the model's streamed analysis. These are the lit dials on an otherwise matte panel. Everywhere else, chrome recedes to greyscale.\n\nThis system explicitly rejects the vocabulary of consumer-social fitness — no feeds, kudos, likes, leaderboards, streaks, or confetti. There is no one to perform for; this is a private tool for a single user. It equally rejects the cluttered pro dashboard and generic AI-SaaS styling.",
     "keyCharacteristics": [
-      "Near-white greyscale chassis; one green accent, used sparingly.",
+      "Near-white chassis in light mode; true-black, white-hairline chassis in dark.",
       "Border-driven, near-flat surfaces — depth is a response to state, not decoration.",
       "Mobile-first, thumb-friendly (44px minimum targets, safe-area aware).",
       "Data and insight are the only things allowed to be vivid.",
-      "Light-only today; dark mode is a first-class, contrast-verified goal."
+      "System-driven light and AMOLED dark themes, both contrast-verified."
     ],
     "rules": [
       { "name": "The One Voice Rule", "body": "Signal Green appears on \u226410% of any screen. It means 'active' or 'act now.' If two greens compete for attention on one view, one of them is wrong — demote it to slate.", "section": "colors" },
       { "name": "The Greyscale-First Rule", "body": "Structure is built in slate and dividers, never in colour. A border, a tint, or a weight change carries hierarchy before any hue does.", "section": "colors" },
-      { "name": "The Dark-Mode-Is-First-Class Rule", "body": "The app ships light-only today. Dark is a priority, not a filter: invert the neutral ramp to a near-black/slate chassis, re-verify every pairing at AA, and lift the accent toward #34d399 for text/icons on dark so Signal Green keeps >=4.5:1.", "section": "colors" },
+      { "name": "The Dark-Mode-Is-First-Class Rule", "body": "The app follows the system theme. Every dark neutral surface is true black, hierarchy comes from translucent white dividers, and text/icons lift to #34d399. Both themes are held to the same AA bar.", "section": "colors" },
       { "name": "The Readout Rule", "body": "Numbers lead, labels follow and shrink. A metric is a bold Ink value with a small uppercase Slate label beneath it — value first, always.", "section": "typography" },
       { "name": "The Flat-By-Default Rule", "body": "Surfaces are flat at rest and separated by borders. Shadow appears only on hover, focus, or genuine overlay. If a static screen needs a shadow to look structured, add a border instead.", "section": "elevation" }
     ],

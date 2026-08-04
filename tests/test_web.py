@@ -713,6 +713,9 @@ def test_infographic_view_serves_stashed_html(client, monkeypatch):
     assert ".track>.fill{display:block" in v.text
     assert ".track>.fill.current{background:#059669" in v.text
     assert ".track>.fill.caution{background:#d97706" in v.text
+    assert "@media(prefers-color-scheme:dark)" in v.text
+    assert "background:#000000!important" in v.text
+    assert ".track>.fill.current{background:#34d399" in v.text
 
 
 def test_infographic_view_unknown_token_404(client):

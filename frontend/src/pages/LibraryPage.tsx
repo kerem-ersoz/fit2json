@@ -77,7 +77,7 @@ export function LibraryPage() {
       {data && !isLoading && filtered.length === 0 &&
         (isFiltering ? (
           <EmptyState
-            icon={<ListChecks className="h-8 w-8 text-slate-300" />}
+            icon={<ListChecks className="h-8 w-8 text-disabled" />}
             title="No matching workouts"
             hint="Try a different sport or search term."
             action={
@@ -88,7 +88,7 @@ export function LibraryPage() {
           />
         ) : (
           <EmptyState
-            icon={<ListChecks className="h-8 w-8 text-slate-300" />}
+            icon={<ListChecks className="h-8 w-8 text-disabled" />}
             title="No workouts yet"
             hint="Add workouts from the Add tab, or point the server at an existing library with --library."
           />
@@ -103,8 +103,8 @@ export function LibraryPage() {
               {groupByDate(filtered.slice(1)).map((group) => (
                 <section key={group.key} className="space-y-3">
                   <div className="flex items-baseline justify-between">
-                    <h2 className="text-sm font-semibold text-slate-700">{group.label}</h2>
-                    <span className="text-xs tabular-nums text-slate-400">{group.items.length}</span>
+                    <h2 className="text-sm font-semibold text-strong">{group.label}</h2>
+                    <span className="text-xs tabular-nums text-faint">{group.items.length}</span>
                   </div>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     {group.items.map((a) => (

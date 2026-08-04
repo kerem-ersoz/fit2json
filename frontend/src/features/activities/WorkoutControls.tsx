@@ -35,7 +35,7 @@ export function WorkoutControls({
     <div className={clsx('flex flex-col gap-2', !stacked && 'sm:flex-row sm:items-center')}>
       <div className={clsx('relative w-full', !stacked && 'sm:w-auto')}>
         <Search
-          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-faint"
           aria-hidden
         />
         <input
@@ -52,14 +52,14 @@ export function WorkoutControls({
           placeholder="Search workouts…"
           aria-label="Search workouts"
           className={clsx(
-            'h-11 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-9 text-sm text-slate-900 placeholder:text-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500',
+            'h-11 w-full rounded-lg border border-divider bg-surface pl-9 pr-9 text-sm text-ink placeholder:text-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent',
             !stacked && 'sm:w-56',
           )}
         />
         {!search && (
           <kbd
             className={clsx(
-              'pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] font-medium text-slate-500',
+              'pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 rounded border border-divider bg-surface-muted px-1.5 py-0.5 text-[11px] font-medium text-muted',
               !stacked && 'sm:block',
             )}
           >

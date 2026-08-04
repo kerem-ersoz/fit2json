@@ -10,8 +10,8 @@ import { Badge } from '../../components/ui/Badge'
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <div className="truncate text-sm font-semibold tabular-nums text-slate-900">{value}</div>
-      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="truncate text-sm font-semibold tabular-nums text-ink">{value}</div>
+      <div className="text-[11px] font-medium uppercase tracking-wide text-muted">{label}</div>
     </div>
   )
 }
@@ -25,23 +25,23 @@ export function ActivityCard({ activity, linkHash }: { activity: ActivitySummary
     <Link
       to={`/activities/${encodeURIComponent(activity.id)}${linkHash ? `#${linkHash}` : ''}`}
       data-activity-card
-      className="group block rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
+      className="group block rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
     >
       <Card className="h-full transition-shadow group-hover:shadow-md">
-        <div className="flex items-center gap-3 border-b border-slate-100 p-4">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-600">
+        <div className="flex items-center gap-3 border-b border-divider-soft p-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent-tint text-accent">
             <Icon className="h-5 w-5" />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <span className="truncate font-semibold text-slate-900">{label}</span>
+              <span className="truncate font-semibold text-ink">{label}</span>
               {activity.has_gps && (
-                <Badge className="bg-brand-50 text-brand-700">
+                <Badge className="bg-accent-tint text-accent-strong">
                   <MapPin className="h-3 w-3" /> GPS
                 </Badge>
               )}
             </div>
-            <div className="truncate text-sm text-slate-500">
+            <div className="truncate text-sm text-muted">
               {formatDate(activity.start_time)}
             </div>
           </div>

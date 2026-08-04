@@ -307,6 +307,9 @@ def test_infographic_prompt_prioritizes_latest_corrections():
     assert "baseline in slate" in analyzer.INFOGRAPHIC_SYSTEM_PROMPT
     assert "current or target in green" in analyzer.INFOGRAPHIC_SYSTEM_PROMPT
     assert "Caution Amber #d97706" in analyzer.INFOGRAPHIC_SYSTEM_PROMPT
+    assert "@media (prefers-color-scheme: dark)" in analyzer.INFOGRAPHIC_SYSTEM_PROMPT
+    assert "true black #000000" in analyzer.INFOGRAPHIC_SYSTEM_PROMPT
+    assert "dividers rgba(255,255,255,.22)" in analyzer.INFOGRAPHIC_SYSTEM_PROMPT
 
 
 class _FakeMessage:

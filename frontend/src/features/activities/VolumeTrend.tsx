@@ -25,20 +25,22 @@ export function VolumeTrend({ activities }: { activities: ActivitySummary[] }) {
   return (
     <section
       aria-label={`Weekly distance for the last ${weeks.length} weeks`}
-      className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5"
+      className="rounded-xl border border-divider bg-surface p-4 sm:p-5"
     >
       <div className="mb-3 flex items-end justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-slate-700">This week</h2>
-          <p className="mt-0.5 text-2xl font-bold tabular-nums tracking-tight text-slate-900">
+          <h2 className="text-sm font-semibold text-strong">This week</h2>
+          <p className="mt-0.5 text-2xl font-bold tabular-nums tracking-tight text-ink">
             {fmt.distance(current?.distanceM ?? 0)}
           </p>
         </div>
         {delta !== null && (
           <span
             className={clsx(
-              'inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium tabular-nums',
-              delta >= 0 ? 'bg-brand-50 text-brand-700' : 'bg-slate-100 text-slate-600',
+              'inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium tabular-nums',
+              delta >= 0
+                ? 'border-accent-divider bg-accent-tint text-accent-strong'
+                : 'border-divider-soft bg-surface-subtle text-copy',
             )}
           >
             {delta >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
@@ -61,7 +63,7 @@ export function VolumeTrend({ activities }: { activities: ActivitySummary[] }) {
               <div
                 className={clsx(
                   'w-full rounded-t',
-                  isCurrent ? 'bg-brand-600' : w.distanceM > 0 ? 'bg-brand-300' : 'bg-slate-200',
+                  isCurrent ? 'bg-action' : w.distanceM > 0 ? 'bg-accent-muted' : 'bg-divider',
                 )}
                 style={{ height: `${height}%` }}
               />
@@ -69,7 +71,7 @@ export function VolumeTrend({ activities }: { activities: ActivitySummary[] }) {
           )
         })}
       </div>
-      <p className="mt-2 text-xs text-slate-400">Last {weeks.length} weeks</p>
+      <p className="mt-2 text-xs text-faint">Last {weeks.length} weeks</p>
     </section>
   )
 }

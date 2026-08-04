@@ -91,12 +91,12 @@ export function AnalyzePage() {
               : 'Choose workouts to focus the conversation'
           }
           icon={
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent-tint text-accent-strong">
               <Paperclip className="h-4 w-4" />
             </span>
           }
           onClose={() => setContextOpen(false)}
-          contentClassName="min-h-0 flex-1 overflow-hidden bg-slate-50/60 p-4"
+          contentClassName="min-h-0 flex-1 overflow-hidden bg-surface-muted p-4"
         >
           {isLoading && <ContextSkeleton />}
 
@@ -110,7 +110,7 @@ export function AnalyzePage() {
 
           {data && !isLoading && data.length === 0 && (
             <EmptyState
-              icon={<Sparkles className="h-8 w-8 text-slate-300" />}
+              icon={<Sparkles className="h-8 w-8 text-disabled" />}
               title="No workouts yet"
               hint="You can still ask general questions, or add workouts from the Add tab."
             />
@@ -145,16 +145,16 @@ export function AnalyzePage() {
 
 function ContextSkeleton() {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4" aria-label="Loading workouts">
+    <div className="rounded-xl border border-divider bg-surface p-4" aria-label="Loading workouts">
       <div className="animate-pulse space-y-3">
-        <div className="h-9 rounded-lg bg-slate-100" />
-        <div className="h-7 w-2/3 rounded bg-slate-100" />
+        <div className="h-9 rounded-lg bg-skeleton" />
+        <div className="h-7 w-2/3 rounded bg-skeleton" />
         {[0, 1, 2, 3, 4].map((i) => (
-          <div key={i} className="flex items-center gap-3 border-t border-slate-100 pt-3">
-            <div className="h-8 w-8 rounded-full bg-slate-100" />
+          <div key={i} className="flex items-center gap-3 border-t border-divider-soft pt-3">
+            <div className="h-8 w-8 rounded-full bg-skeleton" />
             <div className="flex-1 space-y-2">
-              <div className="h-3 rounded bg-slate-100" />
-              <div className="h-2.5 w-2/3 rounded bg-slate-100" />
+              <div className="h-3 rounded bg-skeleton" />
+              <div className="h-2.5 w-2/3 rounded bg-skeleton" />
             </div>
           </div>
         ))}

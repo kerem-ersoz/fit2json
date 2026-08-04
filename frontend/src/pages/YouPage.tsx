@@ -169,7 +169,7 @@ function convertUnits(d: Draft, from: UnitSystem, to: UnitSystem): Draft {
 
 // ── small field primitives ───────────────────────────────────────────────────
 const inputCls =
-  'h-11 w-full rounded-lg border border-slate-200 px-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500'
+  'h-11 w-full rounded-lg border border-divider px-3 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
 
 function Field({
   label,
@@ -182,9 +182,9 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-slate-500">{label}</span>
+      <span className="mb-1 block text-xs font-medium text-muted">{label}</span>
       {children}
-      {hint && <span className="mt-1 block text-xs text-slate-400">{hint}</span>}
+      {hint && <span className="mt-1 block text-xs text-faint">{hint}</span>}
     </label>
   )
 }
@@ -225,7 +225,7 @@ function NumberField({
           className={suffix ? `${inputCls} pr-12` : inputCls}
         />
         {suffix && (
-          <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-slate-400">
+          <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-faint">
             {suffix}
           </span>
         )}
@@ -249,10 +249,10 @@ function SectionCard({
     <Card>
       <CardBody className="space-y-4">
         <div>
-          <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900">
+          <h2 className="flex items-center gap-2 text-base font-semibold text-ink">
             {icon} {title}
           </h2>
-          {description && <p className="mt-1 text-xs text-slate-500">{description}</p>}
+          {description && <p className="mt-1 text-xs text-muted">{description}</p>}
         </div>
         {children}
       </CardBody>
@@ -320,7 +320,7 @@ export function YouPage() {
     <div className="flex flex-col gap-6">
       <h1 className="sr-only">You</h1>
       <SectionCard
-        icon={<User className="h-5 w-5 text-brand-600" />}
+        icon={<User className="h-5 w-5 text-accent" />}
         title="About you"
         description={`Physical measurements are shown in ${system} units — switch units in the sidebar.`}
       >
@@ -373,7 +373,7 @@ export function YouPage() {
                     onChange={(e) => set('heightFt')(e.target.value)}
                     className={`${inputCls} pr-8`}
                   />
-                  <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-slate-400">
+                  <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-faint">
                     ft
                   </span>
                 </div>
@@ -389,7 +389,7 @@ export function YouPage() {
                     onChange={(e) => set('heightIn')(e.target.value)}
                     className={`${inputCls} pr-8`}
                   />
-                  <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-slate-400">
+                  <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-faint">
                     in
                   </span>
                 </div>
@@ -419,7 +419,7 @@ export function YouPage() {
       </SectionCard>
 
       <SectionCard
-        icon={<HeartPulse className="h-5 w-5 text-brand-600" />}
+        icon={<HeartPulse className="h-5 w-5 text-accent" />}
         title="Performance benchmarks"
         description="Used to compute heart-rate / power zones and gauge effort in each workout."
       >
@@ -480,7 +480,7 @@ export function YouPage() {
       </SectionCard>
 
       <SectionCard
-        icon={<Target className="h-5 w-5 text-brand-600" />}
+        icon={<Target className="h-5 w-5 text-accent" />}
         title="Goals & notes"
         description="Anything the coach should keep in mind — target races, injuries, training focus."
       >
@@ -489,11 +489,11 @@ export function YouPage() {
           onChange={(e) => set('goals')(e.target.value)}
           rows={4}
           placeholder="e.g. Training for a sub-3:30 marathon in the spring; recovering from a calf strain."
-          className="w-full resize-y rounded-lg border border-slate-200 p-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          className="w-full resize-y rounded-lg border border-divider p-3 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
         />
       </SectionCard>
 
-      <div className="sticky bottom-0 -mx-4 flex items-center gap-3 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur sm:mx-0 sm:rounded-xl sm:border sm:px-5">
+      <div className="sticky bottom-0 -mx-4 flex items-center gap-3 border-t border-divider bg-chrome px-4 py-3 backdrop-blur sm:mx-0 sm:rounded-xl sm:border sm:px-5">
         <Button onClick={save} disabled={status === 'saving'}>
           {status === 'saving' ? (
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -503,12 +503,12 @@ export function YouPage() {
           {status === 'saving' ? 'Saving…' : 'Save profile'}
         </Button>
         {status === 'saved' && (
-          <span className="flex items-center gap-1.5 text-sm font-medium text-brand-700">
+          <span className="flex items-center gap-1.5 text-sm font-medium text-accent-strong">
             <Check className="h-4 w-4" /> Saved
           </span>
         )}
         {status === 'error' && (
-          <span className="text-sm text-red-600">{errMsg ?? 'Could not save.'}</span>
+          <span className="text-sm text-danger">{errMsg ?? 'Could not save.'}</span>
         )}
       </div>
     </div>

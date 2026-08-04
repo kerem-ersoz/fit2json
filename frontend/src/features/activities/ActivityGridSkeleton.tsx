@@ -5,8 +5,8 @@ export function ActivityGridSkeleton({ count = 6 }: { count?: number }) {
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2" aria-hidden>
       {Array.from({ length: count }).map((_, i) => (
-        <div key={i} className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="flex items-center gap-3 border-b border-slate-100 pb-4">
+        <div key={i} className="rounded-xl border border-divider bg-surface p-4">
+          <div className="flex items-center gap-3 border-b border-divider-soft pb-4">
             <Skeleton className="h-11 w-11 rounded-full" />
             <div className="flex-1 space-y-2">
               <Skeleton className="h-4 w-24" />

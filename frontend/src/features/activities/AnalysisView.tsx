@@ -36,14 +36,14 @@ export function AnalysisView({
   return (
     <div>
       {(prompt || meta) && (
-        <details className="mb-3 rounded-lg border border-slate-100 bg-slate-50/70">
-          <summary className="flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-xs text-slate-500">
-            <span className="shrink-0 font-medium text-slate-600">Prompt</span>
-            {preview && <span className="min-w-0 flex-1 truncate text-slate-400">{preview}</span>}
+        <details className="mb-3 rounded-lg border border-divider-soft bg-surface-muted">
+          <summary className="flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-xs text-muted">
+            <span className="shrink-0 font-medium text-copy">Prompt</span>
+            {preview && <span className="min-w-0 flex-1 truncate text-faint">{preview}</span>}
           </summary>
-          <div className="space-y-1 px-2.5 pb-2.5 text-xs text-slate-500">
+          <div className="space-y-1 px-2.5 pb-2.5 text-xs text-muted">
             {prompt && <p className="whitespace-pre-wrap">{prompt}</p>}
-            {meta && <p className="text-slate-400">{meta}</p>}
+            {meta && <p className="text-faint">{meta}</p>}
           </div>
         </details>
       )}

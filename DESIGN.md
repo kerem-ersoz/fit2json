@@ -15,6 +15,12 @@ colors:
   divider-soft: "#f1f5f9"
   mist: "#f8fafc"
   surface: "#ffffff"
+  dark-canvas: "#000000"
+  dark-surface: "#000000"
+  dark-ink: "#f8fafc"
+  dark-copy: "#cbd5e1"
+  dark-muted: "#94a3b8"
+  dark-accent: "#34d399"
   alert-red: "#b91c1c"
   alert-red-tint: "#fef2f2"
   alert-red-border: "#fecaca"
@@ -131,11 +137,11 @@ generic AI-SaaS styling (cream/violet gradients, gradient text, hero-metric card
 templates, tracked-uppercase eyebrows on every section).
 
 **Key Characteristics:**
-- Near-white greyscale chassis; one green accent, used sparingly.
+- Near-white chassis in light mode; true-black, white-hairline chassis in dark.
 - Border-driven, near-flat surfaces — depth is a *response* to state, not decoration.
 - Mobile-first, thumb-friendly (44px minimum targets, safe-area aware).
 - Data and insight are the only things allowed to be vivid.
-- Light-only today; dark mode is a first-class, contrast-verified goal (see Colors).
+- System-driven light and AMOLED dark themes, both contrast-verified (see Colors).
 
 ## 2. Colors
 
@@ -164,6 +170,17 @@ all the "active / on / go" work; everything structural is slate.
 - **Mist** (`#f8fafc`, slate-50): the body background and the tint behind subtle panels.
 - **Surface** (`#ffffff`): cards, bars, inputs — the raised matte face of the panel.
 
+### AMOLED Dark
+- **Canvas / Surface** (`#000000`): page, cards, bars, inputs, sheets, and navigation.
+  Neutral regions stay black rather than becoming stacked gray panels.
+- **Ink** (`#f8fafc`), **Copy** (`#cbd5e1`), **Muted** (`#94a3b8`): the inverted
+  reading ramp. All three meet AA on black.
+- **Divider** (`rgb(255 255 255 / 22%)`): the primary structural line. Soft inner
+  rules use 14%; selected-control outlines use 34%.
+- **Signal Green** (`#34d399`): dark-theme text and icons. Filled actions use
+  `#047857` with white text so both sides of the pairing meet AA.
+- Theme selection follows `prefers-color-scheme`; there is no app-specific toggle.
+
 ### Semantic
 - **Alert Red** (`#b91c1c` on `#fef2f2`, border `#fecaca`): error and failure states only.
 - **Caution Amber** (`#d97706`): non-fatal warnings (e.g. a chart that failed to render).
@@ -176,11 +193,10 @@ them is wrong — demote it to slate.
 **The Greyscale-First Rule.** Structure is built in slate and dividers, never in
 colour. A border, a tint, or a weight change carries hierarchy before any hue does.
 
-**The Dark-Mode-Is-First-Class Rule.** The app ships light-only today
-(`color-scheme: light`, `mist` body). Dark is a priority, not a filter: invert the
-neutral ramp to a near-black/slate chassis, re-verify every pairing at AA, and
-lift the accent toward `#34d399` (brand-400) for text/icons on dark so Signal
-Green keeps ≥4.5:1. Both themes are held to the same bar; neither is the afterthought.
+**The Dark-Mode-Is-First-Class Rule.** The app follows the system theme. Dark is
+not a filter: every neutral surface resolves to true black, hierarchy comes from
+translucent white dividers, and the accent lifts to `#34d399` (brand-400) for
+text/icons. Both themes are held to the same AA bar; neither is the afterthought.
 
 ## 3. Typography
 
