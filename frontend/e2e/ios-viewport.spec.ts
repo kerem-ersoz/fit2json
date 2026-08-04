@@ -132,6 +132,44 @@ test('publishes standalone Home Screen app metadata', async ({ page }) => {
   })
 })
 
+test('matches the system theme with true-black dark surfaces', async ({ page }) => {
+  const theme = () =>
+    page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement)
+      const header = document.querySelector('header')
+      return {
+        canvas: root.getPropertyValue('--color-canvas').trim(),
+        surface: root.getPropertyValue('--color-surface').trim(),
+        divider: root.getPropertyValue('--color-divider').trim(),
+        accent: root.getPropertyValue('--color-accent').trim(),
+        body: getComputedStyle(document.body).backgroundColor,
+        header: header ? getComputedStyle(header).backgroundColor : '',
+      }
+    })
+
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await page.goto('/')
+  await expect(page.locator('header')).toBeVisible()
+
+  const dark = await theme()
+  expect(dark).toMatchObject({
+    canvas: '#000000',
+    surface: '#000000',
+    divider: 'rgb(255 255 255 / 0.22)',
+    accent: '#34d399',
+  })
+  expect(dark.body).toMatch(/^rgb\(0,\s*0,\s*0\)$/)
+  expect(dark.header).toMatch(/^rgba?\(0,\s*0,\s*0/)
+
+  await page.emulateMedia({ colorScheme: 'light' })
+  await expect.poll(theme).toMatchObject({
+    canvas: '#f8fafc',
+    surface: '#ffffff',
+    divider: '#e2e8f0',
+    accent: '#059669',
+  })
+})
+
 test('restores touch surfaces after browser chrome changes between tabs', async ({ page }) => {
   await emulateVisualViewport(page)
   await page.goto('/analyze')

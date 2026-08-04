@@ -207,7 +207,7 @@ export function InfographicView({ source }: { source: InfographicSource }) {
 
   if (phase === 'checking') {
     return (
-      <div className="flex min-h-[8rem] items-center justify-center text-sm text-slate-400">
+      <div className="flex min-h-[8rem] items-center justify-center text-sm text-faint">
         <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Checking…
       </div>
     )
@@ -215,13 +215,13 @@ export function InfographicView({ source }: { source: InfographicSource }) {
 
   if (phase === 'empty') {
     return (
-      <div className="flex min-h-[14rem] flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-slate-200 bg-white/60 p-6 text-center">
-        <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
+      <div className="flex min-h-[14rem] flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider bg-surface-translucent p-6 text-center">
+        <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent-tint text-accent">
           <Layers className="h-5 w-5" />
         </span>
         <div>
-          <p className="text-sm font-medium text-slate-700">See this analysis as an infographic</p>
-          <p className="mt-0.5 text-xs text-slate-400">A visual summary you can scan. Uses the model — takes a moment.</p>
+          <p className="text-sm font-medium text-strong">See this analysis as an infographic</p>
+          <p className="mt-0.5 text-xs text-faint">A visual summary you can scan. Uses the model — takes a moment.</p>
         </div>
         <Button onClick={generate} className="min-h-0 py-2">
           <Layers className="h-4 w-4" /> Generate
@@ -233,15 +233,15 @@ export function InfographicView({ source }: { source: InfographicSource }) {
   if (phase === 'loading') {
     return (
       <div className="flex min-h-[14rem] flex-col items-center justify-center gap-3 text-center">
-        <Loader2 className="h-6 w-6 animate-spin text-brand-600" />
-        <p className="text-sm font-medium text-slate-700">Designing your infographic…</p>
-        <p className="text-xs text-slate-400">
+        <Loader2 className="h-6 w-6 animate-spin text-accent" />
+        <p className="text-sm font-medium text-strong">Designing your infographic…</p>
+        <p className="text-xs text-faint">
           Turning the analysis into visuals{bytes > 0 ? ` · ${(bytes / 1024).toFixed(1)} KB so far` : ''}
         </p>
         <button
           type="button"
           onClick={stop}
-          className="mt-1 inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+          className="mt-1 inline-flex items-center gap-1.5 rounded-lg border border-divider bg-surface px-3 py-1.5 text-xs font-medium text-copy hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
           <Square className="h-3.5 w-3.5" /> Stop
         </button>
@@ -252,9 +252,9 @@ export function InfographicView({ source }: { source: InfographicSource }) {
   if (phase === 'error') {
     return (
       <div className="flex min-h-[14rem] flex-col items-center justify-center gap-3 text-center">
-        <AlertCircle className="h-6 w-6 text-red-500" />
-        <p className="text-sm font-medium text-slate-700">Couldn’t build the infographic</p>
-        {error && <p className="max-w-sm text-xs text-slate-500">{error}</p>}
+        <AlertCircle className="h-6 w-6 text-danger-soft" />
+        <p className="text-sm font-medium text-strong">Couldn’t build the infographic</p>
+        {error && <p className="max-w-sm text-xs text-muted">{error}</p>}
         <Button variant="secondary" onClick={generate} className="min-h-0 py-2">
           <RefreshCw className="h-4 w-4" /> Try again
         </Button>
@@ -270,14 +270,14 @@ export function InfographicView({ source }: { source: InfographicSource }) {
         sandbox="allow-scripts"
         scrolling="no"
         src={viewUrl}
-        className="w-full overflow-hidden rounded-xl border border-slate-200 bg-white"
+        className="w-full overflow-hidden rounded-xl border border-divider bg-surface"
         style={{ height: iframeHeight }}
       />
       <div className="mt-2 flex items-center justify-between gap-2">
         <button
           type="button"
           onClick={generate}
-          className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+          className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-medium text-muted hover:bg-hover hover:text-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
           <RefreshCw className="h-3.5 w-3.5" /> Regenerate
         </button>
@@ -285,15 +285,15 @@ export function InfographicView({ source }: { source: InfographicSource }) {
           <button
             type="button"
             onClick={copy}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-divider bg-surface px-3 py-2 text-xs font-medium text-strong hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
-            {copied ? <Check className="h-3.5 w-3.5 text-brand-600" /> : <Copy className="h-3.5 w-3.5" />}
+            {copied ? <Check className="h-3.5 w-3.5 text-accent" /> : <Copy className="h-3.5 w-3.5" />}
             {copied ? 'Copied' : 'Copy HTML'}
           </button>
           <button
             type="button"
             onClick={download}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-xs font-medium text-white hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-action px-3 py-2 text-xs font-medium text-on-action hover:bg-action-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
           >
             <Download className="h-3.5 w-3.5" /> Download
           </button>

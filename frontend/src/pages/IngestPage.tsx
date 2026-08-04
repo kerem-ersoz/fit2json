@@ -9,7 +9,7 @@ import { Card, CardBody } from '../components/ui/Card'
 function AddedSummary({ added, skipped }: { added: { id: string }[]; skipped: number }) {
   if (added.length === 0 && skipped === 0) return null
   return (
-    <div className="rounded-lg border border-brand-200 bg-brand-50 p-3 text-sm text-brand-800">
+    <div className="rounded-lg border border-accent-divider bg-accent-tint p-3 text-sm text-accent-deep">
       {added.length > 0 ? (
         <>
           Added <strong>{added.length}</strong> workout{added.length === 1 ? '' : 's'}.{' '}
@@ -20,7 +20,7 @@ function AddedSummary({ added, skipped }: { added: { id: string }[]; skipped: nu
       ) : (
         'No new workouts.'
       )}
-      {skipped > 0 && <span className="text-brand-600"> · {skipped} already in library</span>}
+      {skipped > 0 && <span className="text-accent"> · {skipped} already in library</span>}
     </div>
   )
 }
@@ -58,8 +58,8 @@ function UploadCard() {
   return (
     <Card>
       <CardBody className="space-y-3">
-        <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900">
-          <FileUp className="h-5 w-5 text-brand-600" /> Upload .fit files
+        <h2 className="flex items-center gap-2 text-base font-semibold text-ink">
+          <FileUp className="h-5 w-5 text-accent" /> Upload .fit files
         </h2>
         <div
           role="button"
@@ -78,14 +78,14 @@ function UploadCard() {
           }}
           className={[
             'flex min-h-[132px] cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-6 text-center transition-colors',
-            dragging ? 'border-brand-500 bg-brand-50' : 'border-slate-300 hover:border-brand-400',
+            dragging ? 'border-accent bg-accent-tint' : 'border-divider-strong hover:border-accent',
           ].join(' ')}
         >
-          <UploadCloud className="h-8 w-8 text-slate-400" />
-          <div className="text-sm font-medium text-slate-700">
+          <UploadCloud className="h-8 w-8 text-faint" />
+          <div className="text-sm font-medium text-strong">
             Tap to choose, or drag &amp; drop
           </div>
-          <div className="text-xs text-slate-400">.fit files from Garmin, Wahoo, etc.</div>
+          <div className="text-xs text-faint">.fit files from Garmin, Wahoo, etc.</div>
           <input
             ref={inputRef}
             type="file"
@@ -97,18 +97,18 @@ function UploadCard() {
         </div>
 
         {busy && (
-          <div className="flex items-center gap-2 text-sm text-slate-500">
+          <div className="flex items-center gap-2 text-sm text-muted">
             <Loader2 className="h-4 w-4 animate-spin" /> Converting…
           </div>
         )}
         {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <div className="rounded-lg border border-danger-divider bg-danger-tint p-3 text-sm text-danger-strong">
             {error}
           </div>
         )}
         {result && <AddedSummary added={result.added} skipped={result.skipped} />}
         {result && result.errors.length > 0 && (
-          <ul className="space-y-1 text-xs text-amber-700">
+          <ul className="space-y-1 text-xs text-warning-strong">
             {result.errors.map((e) => (
               <li key={e.file}>
                 {e.file}: {e.error}
@@ -156,20 +156,20 @@ function FetchCard({
   return (
     <Card>
       <CardBody className="space-y-3">
-        <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900">
+        <h2 className="flex items-center gap-2 text-base font-semibold text-ink">
           {icon} {title}
         </h2>
-        <p className="text-xs text-slate-500">{hint}</p>
+        <p className="text-xs text-muted">{hint}</p>
         <div className="flex items-end gap-3">
           <label className="text-sm">
-            <span className="mb-1 block text-xs text-slate-500">Days back</span>
+            <span className="mb-1 block text-xs text-muted">Days back</span>
             <input
               type="number"
               min={1}
               max={365}
               value={days}
               onChange={(e) => setDays(Math.max(1, Number(e.target.value) || 1))}
-              className="h-11 w-24 rounded-lg border border-slate-200 px-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              className="h-11 w-24 rounded-lg border border-divider px-3 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
             />
           </label>
           <Button onClick={run} disabled={busy}>
@@ -178,7 +178,7 @@ function FetchCard({
           </Button>
         </div>
         {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <div className="rounded-lg border border-danger-divider bg-danger-tint p-3 text-sm text-danger-strong">
             {error}
           </div>
         )}
@@ -193,7 +193,7 @@ export function IngestPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Add workouts</h1>
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-muted">
           Upload .fit files, or pull recent activities from Garmin Connect or Strava.
         </p>
       </div>
@@ -205,13 +205,13 @@ export function IngestPage() {
           platform="garmin"
           title="Garmin Connect"
           hint="Uses your cached Garmin session or GARMIN_EMAIL / GARMIN_PASSWORD. MFA logins must be seeded first."
-          icon={<CloudDownload className="h-5 w-5 text-brand-600" />}
+          icon={<CloudDownload className="h-5 w-5 text-accent" />}
         />
         <FetchCard
           platform="strava"
           title="Strava"
           hint="Uses your STRAVA_CLIENT_ID / SECRET / REFRESH_TOKEN. Lower fidelity than .fit — bulk-export + upload for full detail."
-          icon={<Bike className="h-5 w-5 text-brand-600" />}
+          icon={<Bike className="h-5 w-5 text-accent" />}
         />
       </div>
     </div>

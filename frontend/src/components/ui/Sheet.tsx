@@ -71,7 +71,7 @@ export function Sheet({
         aria-hidden="true"
         tabIndex={-1}
         onClick={onClose}
-        className={`absolute inset-0 cursor-default bg-slate-900/40 transition-opacity duration-200 motion-reduce:transition-none ${
+        className={`absolute inset-0 cursor-default bg-backdrop transition-opacity duration-200 motion-reduce:transition-none ${
           mounted ? 'opacity-100' : 'opacity-0'
         }`}
       />
@@ -80,21 +80,21 @@ export function Sheet({
         aria-modal="true"
         aria-labelledby={labelledById}
         className={[
-          'relative z-10 flex w-full max-h-[92vh] flex-col overflow-hidden border-slate-200 bg-white shadow-xl',
+          'relative z-10 flex w-full max-h-[92vh] flex-col overflow-hidden border-divider bg-surface shadow-xl',
           'rounded-t-2xl border sm:h-full sm:max-h-none sm:w-full sm:rounded-none sm:rounded-l-2xl sm:border-l',
           size === 'wide' ? 'sm:max-w-4xl' : 'sm:max-w-xl',
           reduced ? '' : 'transition-transform duration-200 ease-out',
           shown ? 'translate-y-0 sm:translate-x-0' : 'translate-y-6 sm:translate-y-0 sm:translate-x-8',
         ].join(' ')}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+        <div className="flex items-center justify-between gap-3 border-b border-divider-soft px-4 py-3">
           <div className="flex min-w-0 items-center gap-2">
             {icon}
             <div className="min-w-0">
-              <h2 id={labelledById} className="text-sm font-semibold text-slate-900">
+              <h2 id={labelledById} className="text-sm font-semibold text-ink">
                 {title}
               </h2>
-              {subtitle && <p className="truncate text-xs text-slate-500">{subtitle}</p>}
+              {subtitle && <p className="truncate text-xs text-muted">{subtitle}</p>}
             </div>
           </div>
           <button
@@ -102,16 +102,16 @@ export function Sheet({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            className="rounded-lg p-1.5 text-faint hover:bg-hover hover:text-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        <div className={contentClassName ?? 'flex-1 overflow-y-auto bg-slate-50/60 p-4'}>{children}</div>
+        <div className={contentClassName ?? 'flex-1 overflow-y-auto bg-surface-muted p-4'}>{children}</div>
 
         {footer && (
-          <div className="border-t border-slate-100 px-4 py-3">{footer}</div>
+          <div className="border-t border-divider-soft px-4 py-3">{footer}</div>
         )}
       </div>
     </div>,

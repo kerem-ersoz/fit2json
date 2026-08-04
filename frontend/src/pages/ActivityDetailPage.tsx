@@ -13,8 +13,8 @@ import { AnalysisPanel } from '../features/activities/AnalysisPanel'
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <Card className="p-3">
-      <div className="text-lg font-bold leading-tight text-slate-900">{value}</div>
-      <div className="text-[11px] uppercase tracking-wide text-slate-400">{label}</div>
+      <div className="text-lg font-bold leading-tight text-ink">{value}</div>
+      <div className="text-[11px] uppercase tracking-wide text-faint">{label}</div>
     </Card>
   )
 }
@@ -55,18 +55,18 @@ export function ActivityDetailPage() {
       <div>
         <Link
           to="/"
-          className="mb-3 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-800"
+          className="mb-3 inline-flex items-center gap-1.5 text-sm font-medium text-muted hover:text-ink-soft"
         >
           <ArrowLeft className="h-4 w-4" /> Library
         </Link>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-600">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-accent-tint text-accent">
               <Icon className="h-6 w-6" />
             </div>
             <div>
               <h1 className="text-xl font-bold tracking-tight sm:text-2xl">{label}</h1>
-              <p className="text-sm text-slate-500">{formatDateTime(d.start_time)}</p>
+              <p className="text-sm text-muted">{formatDateTime(d.start_time)}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -75,7 +75,7 @@ export function ActivityDetailPage() {
                 href={d.source_ref.url}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-brand-600 px-3 text-sm font-medium text-white hover:bg-brand-700"
+                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-action px-3 text-sm font-medium text-on-action hover:bg-action-hover"
                 title={`Open the original activity on ${d.source_ref.label}`}
               >
                 <ExternalLink className="h-4 w-4" />
@@ -86,7 +86,7 @@ export function ActivityDetailPage() {
               href={api.rawUrl(d.id)}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 hover:bg-slate-50"
+              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-divider bg-surface px-3 text-sm font-medium text-copy hover:bg-hover"
               title="Download lossless JSON"
             >
               <Download className="h-4 w-4" />
@@ -110,13 +110,13 @@ export function ActivityDetailPage() {
       {d.has_gps && streamsQ.data && streamsQ.data.latlng.length > 0 && (
         <section>
           <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Route</h2>
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Route</h2>
             {d.source_ref && (
               <a
                 href={d.source_ref.url}
                 target="_blank"
                 rel="noreferrer"
-                className="text-xs font-medium text-brand-700 hover:underline"
+                className="text-xs font-medium text-accent-strong hover:underline"
               >
                 Full map &amp; charts on {d.source_ref.label} →
               </a>

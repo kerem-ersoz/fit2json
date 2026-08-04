@@ -47,9 +47,9 @@ function SheetLens({ text, source }: { text: ReactNode; source: InfographicSourc
           type="button"
           onClick={() => setOpen(true)}
           title="See this analysis as a visual infographic"
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-divider bg-surface px-2.5 py-1.5 text-xs font-medium text-copy hover:bg-hover hover:text-ink-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
-          <Layers className="h-3.5 w-3.5 text-brand-600" /> Visual
+          <Layers className="h-3.5 w-3.5 text-accent" /> Visual
         </button>
       </div>
       {open && (
@@ -57,12 +57,12 @@ function SheetLens({ text, source }: { text: ReactNode; source: InfographicSourc
           title="Infographic"
           subtitle="A visual take on your analysis"
           icon={
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-accent-tint text-accent">
               <Layers className="h-4 w-4" />
             </span>
           }
           onClose={() => setOpen(false)}
-          contentClassName="scrollbar-hidden flex-1 overflow-y-auto bg-slate-50/60 p-4"
+          contentClassName="scrollbar-hidden flex-1 overflow-y-auto bg-surface-muted p-4"
         >
           <InfographicView source={source} />
         </Sheet>
@@ -79,20 +79,20 @@ function Segmented({
   onChange: (v: 'text' | 'visual') => void
 }) {
   const seg = (active: boolean) =>
-    `inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 ${
-      active ? 'bg-white text-slate-900' : 'text-slate-500 hover:text-slate-700'
+    `inline-flex items-center gap-1.5 rounded-md border border-transparent px-2.5 py-1 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+      active ? 'border-divider-strong bg-surface text-ink' : 'text-muted hover:text-strong'
     }`
   return (
     <div
       role="tablist"
       aria-label="Analysis view"
-      className="inline-flex items-center gap-0.5 rounded-lg border border-slate-200 bg-slate-50 p-0.5"
+      className="inline-flex items-center gap-0.5 rounded-lg border border-divider bg-surface-muted p-0.5"
     >
       <button type="button" role="tab" aria-selected={value === 'text'} onClick={() => onChange('text')} className={seg(value === 'text')}>
         <FileText className="h-3.5 w-3.5" /> Text
       </button>
       <button type="button" role="tab" aria-selected={value === 'visual'} onClick={() => onChange('visual')} className={seg(value === 'visual')}>
-        <Layers className={`h-3.5 w-3.5 ${value === 'visual' ? 'text-brand-600' : ''}`} /> Visual
+        <Layers className={`h-3.5 w-3.5 ${value === 'visual' ? 'text-accent' : ''}`} /> Visual
       </button>
     </div>
   )

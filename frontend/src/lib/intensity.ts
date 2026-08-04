@@ -8,12 +8,12 @@ import type { ActivitySummary } from './api'
 
 // Full literal Tailwind classes (so the JIT scanner keeps them).
 const COLORS = {
-  gray: { disc: 'bg-slate-100', icon: 'text-slate-500', dot: 'bg-slate-400' },
-  blue: { disc: 'bg-blue-50', icon: 'text-blue-600', dot: 'bg-blue-500' },
-  green: { disc: 'bg-green-50', icon: 'text-green-600', dot: 'bg-green-500' },
-  orange: { disc: 'bg-orange-50', icon: 'text-orange-600', dot: 'bg-orange-500' },
-  red: { disc: 'bg-red-50', icon: 'text-red-600', dot: 'bg-red-500' },
-  none: { disc: 'bg-slate-100', icon: 'text-slate-400', dot: 'bg-slate-300' },
+  gray: { disc: 'bg-surface-subtle', icon: 'text-muted', dot: 'bg-faint' },
+  blue: { disc: 'bg-zone-blue-tint', icon: 'text-zone-blue', dot: 'bg-zone-blue' },
+  green: { disc: 'bg-zone-green-tint', icon: 'text-zone-green', dot: 'bg-zone-green' },
+  orange: { disc: 'bg-zone-orange-tint', icon: 'text-zone-orange', dot: 'bg-zone-orange' },
+  red: { disc: 'bg-danger-tint', icon: 'text-danger', dot: 'bg-danger-soft' },
+  none: { disc: 'bg-surface-subtle', icon: 'text-faint', dot: 'bg-divider-strong' },
 } as const
 
 // Ordered high → low; the first threshold an activity clears wins.

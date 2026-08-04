@@ -36,31 +36,31 @@ export function WorkoutBrowser({
   return (
     <div
       className={clsx(
-        'rounded-xl border border-slate-200 bg-white',
+        'rounded-xl border border-divider bg-surface',
         surface === 'sheet' && 'flex h-full min-h-0 flex-col',
       )}
     >
-      <div className="shrink-0 space-y-3 border-b border-slate-100 p-3 sm:p-4">
+      <div className="shrink-0 space-y-3 border-b border-divider-soft p-3 sm:p-4">
         <WorkoutControls {...controls} layout="stacked" />
         <div className="flex items-center justify-between gap-3">
           <button
             type="button"
             onClick={onToggleAll}
             disabled={activities.length === 0}
-            className="rounded text-xs font-medium text-brand-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:opacity-40"
+            className="rounded text-xs font-medium text-accent-strong hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-40"
           >
             {allSelected ? 'Clear selection' : `Select all${activities.length ? ` (${activities.length})` : ''}`}
           </button>
-          <span className="text-xs tabular-nums text-slate-500">{selectedIds.size} selected</span>
+          <span className="text-xs tabular-nums text-muted">{selectedIds.size} selected</span>
         </div>
       </div>
       {activities.length === 0 ? (
-        <p className="p-6 text-center text-sm text-slate-500">No workouts match your filters.</p>
+        <p className="p-6 text-center text-sm text-muted">No workouts match your filters.</p>
       ) : (
         <ul
           ref={listRef}
           className={clsx(
-            'divide-y divide-slate-100 overflow-y-auto',
+            'divide-y divide-divider-soft overflow-y-auto',
             surface === 'sheet'
               ? 'min-h-0 flex-1'
               : 'max-h-[22rem] lg:max-h-[calc(100vh-15rem)]',
@@ -109,7 +109,7 @@ function WorkoutRow({
     <li
       className={clsx(
         'flex items-center gap-3 px-3 py-2.5 transition-colors sm:px-4',
-        selected ? 'bg-brand-50/60' : 'hover:bg-slate-50',
+        selected ? 'bg-accent-tint' : 'hover:bg-hover',
       )}
     >
       <input
@@ -119,7 +119,7 @@ function WorkoutRow({
         onChange={() => onToggle(activity.id)}
         data-activity-card
         aria-label={`Select ${title}${z.zone ? `, ${z.label} intensity` : ''}, ${formatDate(activity.start_time)}`}
-        className="h-4 w-4 shrink-0 rounded border-slate-300 text-brand-600 focus:ring-brand-500 focus:ring-offset-0"
+        className="h-4 w-4 shrink-0 rounded border-divider-strong text-accent focus:ring-accent focus:ring-offset-0"
       />
       <label htmlFor={inputId} className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
         <span
@@ -129,10 +129,10 @@ function WorkoutRow({
           <Icon className="h-4 w-4" />
         </span>
         <span className="min-w-0">
-          <span className="block truncate text-sm font-medium text-slate-900">{title}</span>
-          <span className="flex items-center gap-1.5 text-xs text-slate-500">
+          <span className="block truncate text-sm font-medium text-ink">{title}</span>
+          <span className="flex items-center gap-1.5 text-xs text-muted">
             {z.zone && <span className={clsx('h-2 w-2 shrink-0 rounded-full', z.dot)} aria-hidden />}
-            {z.zone && <span className="shrink-0 text-slate-600">{z.label}</span>}
+            {z.zone && <span className="shrink-0 text-copy">{z.label}</span>}
             {z.zone && <span aria-hidden>·</span>}
             <span className="truncate tabular-nums">
               {formatDate(activity.start_time)}
@@ -145,7 +145,7 @@ function WorkoutRow({
         to={`/activities/${encodeURIComponent(activity.id)}#analyze-panel`}
         aria-label={`Open ${label}`}
         title="Open workout"
-        className="shrink-0 rounded p-1 text-slate-400 transition-colors hover:text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+        className="shrink-0 rounded p-1 text-faint transition-colors hover:text-accent-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
       >
         <ArrowUpRight className="h-4 w-4" />
       </Link>

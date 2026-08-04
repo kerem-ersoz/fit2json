@@ -30,32 +30,32 @@ export function ThinkingDisclosure({
     return (
       <p
         role="status"
-        className={`flex min-h-11 items-center gap-2 text-sm text-slate-600 ${className}`}
+        className={`flex min-h-11 items-center gap-2 text-sm text-copy ${className}`}
       >
-        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-slate-400" />
+        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-faint" />
         <span>{summary?.trim() || 'Thinking…'}</span>
       </p>
     )
   }
 
   return (
-    <details className={`group rounded-lg border border-slate-200 bg-slate-50/70 ${className}`}>
-      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden">
+    <details className={`group rounded-lg border border-divider bg-surface-muted ${className}`}>
+      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-lg px-3 py-2 text-sm text-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden">
         {running ? (
-          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-slate-400" />
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-faint" />
         ) : (
-          <ChevronRight className="h-4 w-4 shrink-0 text-slate-400 group-open:rotate-90" />
+          <ChevronRight className="h-4 w-4 shrink-0 text-faint group-open:rotate-90" />
         )}
         <span aria-live="polite" className="min-w-0 flex-1">
           {label}
         </span>
-        <span className="shrink-0 text-xs text-slate-500">
+        <span className="shrink-0 text-xs text-muted">
           <span className="group-open:hidden">Show thinking</span>
           <span className="hidden group-open:inline">Hide thinking</span>
         </span>
       </summary>
-      <div className="border-t border-slate-200 px-3 py-3">
-        <p className="whitespace-pre-wrap text-sm leading-6 text-slate-700">{detail}</p>
+      <div className="border-t border-divider px-3 py-3">
+        <p className="whitespace-pre-wrap text-sm leading-6 text-strong">{detail}</p>
       </div>
     </details>
   )

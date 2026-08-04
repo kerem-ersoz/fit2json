@@ -20,7 +20,7 @@ function FitBounds({ positions }: { positions: [number, number][] }) {
 export function ActivityMap({ positions }: { positions: [number, number][] }) {
   if (!positions.length) return null
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-200">
+    <div className="activity-map overflow-hidden rounded-xl border border-divider">
       <MapContainer
         center={positions[0]}
         zoom={13}
@@ -31,7 +31,7 @@ export function ActivityMap({ positions }: { positions: [number, number][] }) {
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        <Polyline positions={positions} pathOptions={{ color: '#059669', weight: 4 }} />
+        <Polyline positions={positions} pathOptions={{ color: 'var(--color-accent)', weight: 4 }} />
         <FitBounds positions={positions} />
       </MapContainer>
     </div>

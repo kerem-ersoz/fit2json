@@ -30,11 +30,11 @@ function BrandMark({ compact = false }: { compact?: boolean }) {
     <div className="flex items-center gap-2.5">
       <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" className="h-8 w-8" />
       <div className="leading-tight">
-        <div className="text-lg font-bold tracking-tight text-slate-900">
+        <div className="text-lg font-bold tracking-tight text-ink">
           {config?.brand.name ?? 'FitSift'}
         </div>
         {!compact && (
-          <div className="text-xs text-slate-500">
+          <div className="text-xs text-muted">
             {config?.brand.tagline ?? 'Sift your workouts into insight'}
           </div>
         )}
@@ -46,15 +46,17 @@ function BrandMark({ compact = false }: { compact?: boolean }) {
 function UnitsToggle() {
   const { system, setSystem } = useUnits()
   return (
-    <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs font-medium">
+    <div className="inline-flex rounded-lg border border-divider bg-surface-muted p-0.5 text-xs font-medium">
       {(['metric', 'imperial'] as const).map((s) => (
         <button
           key={s}
           type="button"
           onClick={() => setSystem(s)}
           className={clsx(
-            'rounded-md px-2.5 py-1 capitalize transition-colors',
-            system === s ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-500',
+            'rounded-md border border-transparent px-2.5 py-1 capitalize transition-colors',
+            system === s
+              ? 'border-divider-strong bg-surface text-accent-strong shadow-sm'
+              : 'text-muted',
           )}
         >
           {s}
@@ -75,13 +77,13 @@ function ChatSidebarButton() {
       aria-expanded={open}
       className={clsx(
         'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
-        open ? 'bg-brand-50 text-brand-700' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
+        open ? 'bg-accent-tint text-accent-strong' : 'text-copy hover:bg-hover hover:text-ink',
       )}
     >
       <MessageSquare className="h-5 w-5" />
       <span className="flex-1 text-left">Chat</span>
       {messages.length > 0 && !open && (
-        <span className="h-1.5 w-1.5 rounded-full bg-brand-500" aria-hidden="true" />
+        <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-hidden="true" />
       )}
     </button>
   )
@@ -97,11 +99,11 @@ function ChatHeaderButton() {
       aria-label="Chat"
       aria-haspopup="dialog"
       aria-expanded={open}
-      className="relative rounded-lg p-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+      className="relative rounded-lg p-2 text-copy hover:bg-hover hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
     >
       <MessageSquare className="h-5 w-5" />
       {messages.length > 0 && !open && (
-        <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-brand-500" aria-hidden="true" />
+        <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-accent" aria-hidden="true" />
       )}
     </button>
   )
@@ -119,7 +121,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       className="fixed inset-x-0 top-0 flex h-dvh flex-col overflow-hidden overscroll-none lg:flex-row"
     >
       {/* Desktop sidebar */}
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-slate-200 bg-white lg:flex">
+      <aside className="hidden w-64 shrink-0 flex-col border-r border-divider bg-surface lg:flex">
         <div className="px-5 py-5">
           <BrandMark />
         </div>
@@ -133,8 +135,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                 clsx(
                   'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
                   isActive
-                    ? 'bg-brand-50 text-brand-700'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
+                    ? 'bg-accent-tint text-accent-strong'
+                    : 'text-copy hover:bg-hover hover:text-ink',
                 )
               }
             >
@@ -144,18 +146,18 @@ export function AppShell({ children }: { children: ReactNode }) {
           ))}
         </nav>
         {!isAnalyze && (
-          <div className="border-t border-slate-100 px-3 py-2">
+          <div className="border-t border-divider-soft px-3 py-2">
             <ChatSidebarButton />
           </div>
         )}
         <div className="space-y-3 px-5 py-4">
           <UnitsToggle />
-          <div className="text-xs text-slate-400">Local · single-user</div>
+          <div className="text-xs text-faint">Local · single-user</div>
         </div>
       </aside>
 
       {/* Mobile top bar */}
-      <header className="sticky top-0 z-20 flex shrink-0 items-center justify-between border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur lg:hidden">
+      <header className="sticky top-0 z-20 flex shrink-0 items-center justify-between border-b border-divider bg-chrome px-4 py-3 backdrop-blur lg:hidden">
         <BrandMark compact />
         <div className="flex items-center gap-2">
           <UnitsToggle />
@@ -184,7 +186,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       {/* Mobile bottom tab bar */}
       <nav
-        className="absolute inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-slate-200 bg-white/95 backdrop-blur lg:hidden"
+        className="absolute inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-divider bg-chrome backdrop-blur lg:hidden"
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
         {NAV.map(({ to, label, Icon, end }) => (
@@ -195,7 +197,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             className={({ isActive }) =>
               clsx(
                 'flex min-h-[56px] flex-col items-center justify-center gap-1 text-[11px] font-medium',
-                isActive ? 'text-brand-700' : 'text-slate-500',
+                isActive ? 'text-accent-strong' : 'text-muted',
               )
             }
           >
