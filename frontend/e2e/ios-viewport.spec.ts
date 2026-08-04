@@ -103,6 +103,64 @@ test.beforeEach(async ({ page }) => {
   await mockApi(page)
 })
 
+test('publishes standalone Home Screen app metadata', async ({ page }) => {
+  await page.goto('/')
+
+  const metadata = await page.evaluate(async () => {
+    const manifestLink = document.querySelector<HTMLLinkElement>('link[rel="manifest"]')
+    const manifest = manifestLink
+      ? await fetch(manifestLink.href).then((response) => response.json())
+      : null
+    return {
+      appleCapable: document.querySelector<HTMLMetaElement>(
+        'meta[name="apple-mobile-web-app-capable"]',
+      )?.content,
+      manifest,
+      mobileCapable: document.querySelector<HTMLMetaElement>(
+        'meta[name="mobile-web-app-capable"]',
+      )?.content,
+    }
+  })
+
+  expect(metadata.appleCapable).toBe('yes')
+  expect(metadata.mobileCapable).toBe('yes')
+  expect(metadata.manifest).toMatchObject({
+    display: 'standalone',
+    id: './',
+    scope: './',
+    start_url: './',
+  })
+})
+
+test('restores touch surfaces after browser chrome changes between tabs', async ({ page }) => {
+  await emulateVisualViewport(page)
+  await page.goto('/analyze')
+
+  const layoutHeight = await page.evaluate(() => window.innerHeight)
+  const chromeFrame = {
+    height: layoutHeight - 112,
+    offsetTop: 56,
+  }
+
+  await page.getByRole('link', { name: 'Add' }).tap()
+  await setVisualViewport(page, chromeFrame)
+  await page.getByRole('link', { name: 'Analyze' }).tap()
+
+  const shell = page.locator('#root > div')
+  await expectVisualViewportFrame(shell, chromeFrame)
+
+  const tabBar = page.locator('nav:visible').last()
+  const tabBarBounds = await tabBar.boundingBox()
+  expect(tabBarBounds).not.toBeNull()
+  expect(tabBarBounds!.y).toBeGreaterThanOrEqual(chromeFrame.offsetTop)
+  expect(tabBarBounds!.y + tabBarBounds!.height).toBeLessThanOrEqual(
+    chromeFrame.offsetTop + chromeFrame.height,
+  )
+
+  await page.getByRole('link', { name: 'You' }).tap()
+  await expect(page).toHaveURL(/\/you$/)
+})
+
 test('keeps Analyze interactive through iOS keyboard viewport changes', async ({ page }) => {
   await emulateVisualViewport(page)
   await page.goto('/analyze')

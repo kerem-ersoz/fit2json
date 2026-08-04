@@ -37,6 +37,15 @@ URL, never a token or other secret.
 Both servers already bind all interfaces. Start the backend with `--host 0.0.0.0`,
 then open `http://<your-laptop-ip>:5173` from a phone on the same Wi-Fi.
 
+### Install it on an iPhone Home Screen
+
+Open the deployed site in Safari, choose **Share > Add to Home Screen**, then launch
+FitSift from its icon. FitSift declares standalone display mode, so it opens without
+Safari's top and bottom controls.
+
+If FitSift was added before the standalone manifest existed, remove the old Home
+Screen icon and add it again. iOS snapshots install metadata when the icon is created.
+
 ### Run the iOS WebKit regression
 
 The Playwright suite uses an iPhone WebKit profile to exercise keyboard viewport
