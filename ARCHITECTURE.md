@@ -260,10 +260,13 @@ The FastAPI app mounts the JSON API under `/api` and serves the built SPA for ev
 else (with an `index.html` fallback for client‑side routes). Interactive analysis uses a
 server-owned run: `POST /analysis-runs` starts one worker, and numbered SSE events can be
 replayed after a browser disconnect without restarting inference. Chat runs persist their
-running/terminal state and assistant result in `chats/`; single-workout runs save to
-`memory/`. Small run markers under `chats/.analysis-runs/` keep POST retries idempotent
-across server restarts. A restart cannot resume model inference, so any run left active is
-converted to an explicit interrupted failure on the next start.
+running/terminal state and assistant result in `chats/`. Open clients poll lightweight chat
+summaries, so a run started from another tab or device is discovered within seconds; that
+client then subscribes to the same replayable SSE stream and receives the live thinking and
+answer progress. Single-workout runs save to `memory/`. Small run markers under
+`chats/.analysis-runs/` keep POST retries idempotent across server restarts. A restart cannot
+resume model inference, so any run left active is converted to an explicit interrupted
+failure on the next start.
 
 In-container, the `copilot` and `localhost` analysis backends remain unreachable — use the
 host-mode web process for live analysis with those backends.
