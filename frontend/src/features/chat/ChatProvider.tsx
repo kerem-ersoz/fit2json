@@ -100,6 +100,7 @@ interface ChatContextValue {
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null)
+const CHAT_SYNC_INTERVAL_MS = 2_000
 
 export function ChatProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
@@ -125,6 +126,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const assistantIdRef = useRef<string | null>(null)
   const loadGenerationRef = useRef(0)
   const committedRef = useRef<{ messageId: string; content: string } | null>(null)
+  const chatVersionRef = useRef<string | null>(null)
+  const syncingVersionRef = useRef<string | null>(null)
   // Tracks the currently-active chat so a background save that resolves after the user
   // switched chats doesn't write its result onto the wrong conversation.
   const chatIdRef = useRef<string | null>(null)
@@ -132,15 +135,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     chatIdRef.current = chatId
   }, [chatId])
 
-  const { data: chatList, isLoading: chatsLoading } = useQuery({
+  const {
+    data: chatList,
+    dataUpdatedAt: chatListUpdatedAt,
+    isLoading: chatsLoading,
+  } = useQuery({
     queryKey: ['chats'],
     queryFn: api.chats,
-    refetchInterval: (query) =>
-      query.state.data?.chats.some(
-        (chat) => chat.analysis_status === 'running' || chat.analysis_status === 'cancelling',
-      )
-        ? 2_000
-        : false,
+    // Lightweight summaries let every open client discover runs started elsewhere.
+    refetchInterval: CHAT_SYNC_INTERVAL_MS,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: 'always',
   })
   const chats = chatList?.chats ?? []
 
@@ -379,6 +384,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       if (!chatId) {
         setChatId(id)
         rememberActive(id)
+        chatVersionRef.current = null
       }
       // Mark this chat active immediately so a fast-completing save targets it correctly.
       chatIdRef.current = id
@@ -542,6 +548,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     runIdRef.current = null
     assistantIdRef.current = null
     committedRef.current = null
+    chatVersionRef.current = null
+    syncingVersionRef.current = null
     setRunning(false)
     setStopping(false)
     setChatId(null)
@@ -555,19 +563,21 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const loadChat = useCallback(
-    async (id: string, openPanel: boolean) => {
+    async (id: string, openPanel: boolean, forgetOnFailure = true) => {
       const generation = ++loadGenerationRef.current
       abortRef.current?.abort()
       abortRef.current = null
       runIdRef.current = null
       assistantIdRef.current = null
       committedRef.current = null
+      chatVersionRef.current = null
       setRunning(false)
       setStopping(false)
       setError(null)
       try {
         const chat = await api.chat(id)
         if (generation !== loadGenerationRef.current) return
+        chatVersionRef.current = `${chat.id}:${chat.updated_at}:${chat.analysis_run?.status ?? ''}:${chat.messages.length}`
         chatIdRef.current = chat.id
         setChatId(chat.id)
         setTitle(chat.title)
@@ -618,12 +628,43 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         }
       } catch {
         if (generation !== loadGenerationRef.current) return
-        // The stored chat is gone — forget it.
-        rememberActive(null)
+        if (forgetOnFailure) {
+          // A user-selected chat that is gone should not keep restoring on startup.
+          rememberActive(null)
+        }
       }
     },
     [followRun],
   )
+
+  const activeChatSummary = chatId ? chats.find((chat) => chat.id === chatId) : undefined
+  const activeChatVersion = activeChatSummary
+    ? `${activeChatSummary.id}:${activeChatSummary.updated_at}:${activeChatSummary.analysis_status ?? ''}:${activeChatSummary.message_count}`
+    : null
+  useEffect(() => {
+    if (!chatId || !activeChatVersion) return
+
+    const version = activeChatVersion
+    if (
+      version === chatVersionRef.current ||
+      version === syncingVersionRef.current ||
+      running ||
+      runIdRef.current
+    ) {
+      return
+    }
+
+    syncingVersionRef.current = version
+    void loadChat(chatId, false, false).finally(() => {
+      if (syncingVersionRef.current === version) syncingVersionRef.current = null
+    })
+  }, [
+    activeChatVersion,
+    chatId,
+    chatListUpdatedAt,
+    loadChat,
+    running,
+  ])
 
   const resumeChat = useCallback(
     (id: string, options?: { openPanel?: boolean }) => loadChat(id, options?.openPanel ?? true),
