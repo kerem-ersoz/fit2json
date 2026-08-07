@@ -8,10 +8,12 @@ import {
   startAnalysisRun,
   streamAnalysisRun,
   type AnalysisRunInfo,
+  type ThinkingInfo,
 } from '../../lib/api'
 import { Button } from '../../components/ui/Button'
 import { Card, CardBody } from '../../components/ui/Card'
 import { MarkdownView } from '../../components/ui/Markdown'
+import { ThinkingDisclosure } from '../../components/ui/ThinkingDisclosure'
 import { AnalysisView } from './AnalysisView'
 import { formatDateTime } from '../../lib/format'
 
@@ -56,9 +58,12 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
   const [running, setRunning] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [output, setOutput] = useState('')
+  const [thinking, setThinking] = useState<ThinkingInfo>({ summary: '', text: '' })
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const runIdRef = useRef<string | null>(null)
+  const committedOutputRef = useRef('')
+  const streamBackendRef = useRef('')
   const sectionRef = useRef<HTMLElement>(null)
   const promptRef = useRef<HTMLTextAreaElement>(null)
   const [openIds, setOpenIds] = useState<Set<string>>(new Set())
@@ -87,8 +92,22 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
       await streamAnalysisRun(
         runId,
         {
+          onStart: (value) => {
+            streamBackendRef.current = value
+          },
+          onThinking: setThinking,
           onDelta: (text) => {
-            if (isCurrent()) setOutput((current) => current + text)
+            if (!isCurrent()) return
+            setOutput((current) => {
+              const next = current + text
+              if (streamBackendRef.current !== 'copilot') committedOutputRef.current = next
+              return next
+            })
+          },
+          onReplace: (text) => {
+            if (!isCurrent()) return
+            committedOutputRef.current = text
+            setOutput(text)
           },
           onDone: (info) => {
             clearStoredRun(runId)
@@ -100,6 +119,7 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
             setStopping(false)
             setError(null)
             if (info.saved) setOutput('')
+            committedOutputRef.current = ''
             runIdRef.current = null
           },
           onError: (message) => {
@@ -108,6 +128,7 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
             if (!isCurrent()) return
             setRunning(false)
             setStopping(false)
+            setOutput(committedOutputRef.current)
             setError(message)
             runIdRef.current = null
           },
@@ -116,6 +137,7 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
             if (!isCurrent()) return
             setRunning(false)
             setStopping(false)
+            setOutput(committedOutputRef.current)
             runIdRef.current = null
           },
           onMissing: async () => {
@@ -181,6 +203,9 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
     setRunning(true)
     setError(null)
     setOutput('')
+    setThinking({ summary: '', text: '' })
+    committedOutputRef.current = ''
+    streamBackendRef.current = backend
     const controller = new AbortController()
     abortRef.current = controller
     const runId = newAnalysisRunId()
@@ -266,8 +291,8 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
       <Card>
         <CardBody className="space-y-3">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900">
-              <Sparkles className="h-5 w-5 text-brand-600" /> Analyze this workout
+            <h2 className="flex items-center gap-2 text-base font-semibold text-ink">
+              <Sparkles className="h-5 w-5 text-accent" /> Analyze this workout
             </h2>
             <div className="flex items-center gap-2">
               {backend === 'copilot' && (
@@ -275,7 +300,7 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
                   value={effort}
                   onChange={(e) => setEffort(e.target.value)}
                   disabled={running}
-                  className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  className="h-9 rounded-lg border border-divider bg-surface px-2 text-xs focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                   aria-label="Reasoning effort"
                   title="Copilot reasoning effort. Higher = deeper, more thorough analysis."
                 >
@@ -290,7 +315,7 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
                 value={backend}
                 onChange={(e) => setBackend(e.target.value)}
                 disabled={running}
-                className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                className="h-9 rounded-lg border border-divider bg-surface px-2 text-xs focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                 aria-label="Analysis backend"
               >
                 {options.map((o) => (
@@ -308,7 +333,7 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
             onChange={(e) => setPrompt(e.target.value)}
             placeholder="Ask a coaching question about this workout…"
             rows={3}
-            className="w-full resize-y rounded-lg border border-slate-200 p-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            className="w-full resize-y rounded-lg border border-divider p-3 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           />
 
           <div className="flex flex-wrap gap-2">
@@ -318,7 +343,7 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
                 type="button"
                 onClick={() => setPrompt(s)}
                 disabled={running}
-                className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+                className="rounded-full border border-divider bg-surface-muted px-3 py-1 text-xs text-copy hover:bg-hover disabled:opacity-50"
               >
                 {s}
               </button>
@@ -336,25 +361,31 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
               </Button>
             )}
             {running && (
-              <span className="flex items-center gap-1.5 text-sm text-slate-500">
+              <span className="flex items-center gap-1.5 text-sm text-muted">
                 <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
                 {stopping ? 'Stopping analysis…' : 'Running in the background…'}
               </span>
             )}
           </div>
 
+          <ThinkingDisclosure
+            summary={thinking.summary}
+            thinking={thinking.text}
+            running={running}
+          />
+
           {error && (
-            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <div className="rounded-lg border border-danger-divider bg-danger-tint p-3 text-sm text-danger-strong">
               {error}
             </div>
           )}
 
           {(output || running) && (
-            <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+            <div className="rounded-lg border border-divider bg-surface-muted p-3">
               {output ? (
                 <MarkdownView>{output}</MarkdownView>
               ) : (
-                <p className="text-sm text-slate-500">
+                <p className="text-sm text-muted">
                   You can leave this screen while the model works.
                 </p>
               )}
@@ -364,13 +395,13 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
       </Card>
 
       <div>
-        <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+        <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted">
           Past analyses{past.length ? ` (${past.length})` : ''}
         </h3>
         {analysesQ.isLoading ? (
-          <p className="text-sm text-slate-400">Loading…</p>
+          <p className="text-sm text-faint">Loading…</p>
         ) : past.length === 0 ? (
-          <p className="text-sm text-slate-400">
+          <p className="text-sm text-faint">
             No analyses yet. Ask a question above to create your first one.
           </p>
         ) : (
@@ -388,17 +419,17 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
                     return next
                   })
                 }}
-                className="group rounded-xl border border-slate-200 bg-white"
+                className="group rounded-xl border border-divider bg-surface"
               >
                 <summary className="flex cursor-pointer items-center justify-between gap-3 p-4 text-sm">
-                  <span className="min-w-0 flex-1 truncate font-medium text-slate-800">
+                  <span className="min-w-0 flex-1 truncate font-medium text-ink-soft">
                     {a.prompt || 'Analysis'}
                   </span>
-                  <span className="shrink-0 text-xs text-slate-400">
+                  <span className="shrink-0 text-xs text-faint">
                     {formatDateTime(a.created_at)}
                   </span>
                 </summary>
-                <div className="border-t border-slate-100 p-4">
+                <div className="border-t border-divider-soft p-4">
                   <AnalysisView
                     content={a.content ?? ''}
                     prompt={a.prompt}

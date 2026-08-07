@@ -115,8 +115,8 @@ Working target: **practical WCAG AA.** Body text ≥4.5:1 contrast (large text
 ≥3:1), fully keyboard-operable with visible focus, and a genuine
 `prefers-reduced-motion` alternative for every animation.
 
-**First-class dark mode is a priority.** The app is currently light-only
-(`color-scheme: light`); dark should become a fully-supported, contrast-verified
-theme rather than an afterthought — both themes held to the same AA bar. Charts,
-maps, and status colors must stay distinguishable for common color-vision
-deficiencies (don't rely on hue alone).
+**Dark mode is first-class.** The app follows the system theme and uses a
+true-black AMOLED canvas and surfaces in dark mode, with translucent white
+hairlines instead of gray structural fills. Both themes are held to the same AA
+bar. Charts, maps, and status colors must stay distinguishable for common
+color-vision deficiencies (don't rely on hue alone).

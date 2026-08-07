@@ -31,7 +31,7 @@ const components: Components = {
     if (lang && CHART_LANGUAGES.has(lang)) {
       const spec = codeText(child?.props?.children)
       return (
-        <Suspense fallback={<div className="my-3 text-xs text-slate-400">Rendering chart…</div>}>
+        <Suspense fallback={<div className="my-3 text-xs text-faint">Rendering chart…</div>}>
           <ChartBlock spec={spec} />
         </Suspense>
       )
@@ -43,7 +43,7 @@ const components: Components = {
 
 export function MarkdownView({ children }: { children: string }) {
   return (
-    <div className="prose prose-sm prose-slate max-w-none prose-pre:bg-slate-900 prose-pre:text-slate-100 prose-headings:font-semibold prose-a:text-brand-700">
+    <div className="prose prose-sm prose-slate max-w-none prose-pre:bg-code prose-pre:text-code-text prose-headings:font-semibold prose-a:text-accent-strong dark:prose-invert">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {children}
       </ReactMarkdown>

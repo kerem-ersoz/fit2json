@@ -61,7 +61,7 @@ def _derive_title(messages: List[Dict[str, Any]]) -> str:
 
 
 def _clean_message(msg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Keep only the durable parts of a message (role + content + id/time)."""
+    """Keep only the durable parts of a message."""
     role = msg.get("role")
     if role not in _VALID_ROLES:
         return None
@@ -72,6 +72,13 @@ def _clean_message(msg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "role": role,
         "content": content,
     }
+    if role == "assistant":
+        thinking_summary = str(msg.get("thinking_summary") or "").strip()
+        thinking = str(msg.get("thinking") or "").strip()
+        if thinking_summary:
+            out["thinking_summary"] = thinking_summary
+        if thinking:
+            out["thinking"] = thinking
     out["created_at"] = str(msg.get("created_at") or _now())
     return out
 
@@ -221,6 +228,8 @@ class ChatStore:
         status: str,
         content: str,
         error: Optional[str] = None,
+        thinking_summary: str = "",
+        thinking: str = "",
     ) -> bool:
         """Commit a terminal run state and any generated assistant text."""
         with _STORE_LOCK:
@@ -238,6 +247,8 @@ class ChatStore:
                         "id": assistant_message_id,
                         "role": "assistant",
                         "content": content,
+                        "thinking_summary": thinking_summary,
+                        "thinking": thinking,
                         "created_at": now,
                     }
                 )

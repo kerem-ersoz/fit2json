@@ -18,25 +18,25 @@ function MemoryEntryItem({ entry }: { entry: AnalysisEntry }) {
 
   return (
     <details
-      className="rounded-xl border border-slate-200 bg-white"
+      className="rounded-xl border border-divider bg-surface"
       onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
     >
       <summary className="flex cursor-pointer items-center gap-3 p-4 text-sm">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-600">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-tint text-accent">
           <Icon className="h-4 w-4" />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="truncate font-semibold text-slate-900">
+          <div className="truncate font-semibold text-ink">
             {label} · {formatDate(entry.date ?? entry.created_at)}
           </div>
           {entry.prompt && (
-            <div className="truncate text-xs text-slate-400">{entry.prompt}</div>
+            <div className="truncate text-xs text-faint">{entry.prompt}</div>
           )}
         </div>
       </summary>
-      <div className="border-t border-slate-100 p-4">
+      <div className="border-t border-divider-soft p-4">
         {isLoading || !data ? (
-          <p className="text-sm text-slate-400">Loading…</p>
+          <p className="text-sm text-faint">Loading…</p>
         ) : (
           <AnalysisView
             content={data.content ?? ''}
@@ -71,13 +71,13 @@ export function MemoryPage() {
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Memory</h1>
-          <p className="text-sm text-slate-500">Every analysis you've saved, newest first.</p>
+          <p className="text-sm text-muted">Every analysis you've saved, newest first.</p>
         </div>
         {sports.length > 0 && (
           <select
             value={sport}
             onChange={(e) => setSport(e.target.value)}
-            className="h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            className="h-11 rounded-lg border border-divider bg-surface px-3 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           >
             <option value="all">All sports</option>
             {sports.map((s) => (
@@ -93,7 +93,7 @@ export function MemoryPage() {
       {isError && <ErrorState message={(error as Error)?.message ?? 'Failed to load memory.'} />}
       {data && filtered.length === 0 && (
         <EmptyState
-          icon={<History className="h-8 w-8 text-slate-300" />}
+          icon={<History className="h-8 w-8 text-disabled" />}
           title="No analyses yet"
           hint="Open a workout and run an analysis — it'll be saved here for trend context over time."
         />

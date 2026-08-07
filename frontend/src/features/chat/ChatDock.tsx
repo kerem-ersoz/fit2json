@@ -26,11 +26,12 @@ import { useVisualViewportFrame } from '../../lib/useVisualViewportFrame'
 import { Button } from '../../components/ui/Button'
 import { MarkdownView } from '../../components/ui/Markdown'
 import { Sheet } from '../../components/ui/Sheet'
+import { ThinkingDisclosure } from '../../components/ui/ThinkingDisclosure'
 import { InfographicView } from '../analyze/InfographicView'
 import { CUSTOM_MODEL, useChat, type Msg } from './ChatProvider'
 
 const selectClass =
-  'h-8 max-w-[10rem] rounded-lg border border-slate-200 bg-white px-2 text-base text-slate-700 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50 sm:text-xs'
+  'h-8 max-w-[10rem] rounded-lg border border-divider bg-surface px-2 text-base text-strong focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-50 sm:text-xs'
 
 const MODEL_LABELS: Record<string, string> = {
   'gpt-5.6-sol': 'GPT-5.6 Sol · Long context',
@@ -132,7 +133,7 @@ export function ChatWorkspace({
     <section
       aria-label="Training conversation"
       className={clsx(
-        'flex min-h-0 flex-col overflow-hidden overscroll-none rounded-xl border border-slate-200 bg-white',
+        'flex min-h-0 flex-col overflow-hidden overscroll-none rounded-xl border border-divider bg-surface',
         className,
       )}
     >
@@ -191,7 +192,7 @@ export function ChatDock() {
       <div
         onClick={() => setOpen(false)}
         aria-hidden="true"
-        className={`fixed inset-0 z-40 bg-slate-900/20 transition-opacity duration-200 motion-reduce:transition-none ${
+        className={`fixed inset-0 z-40 bg-backdrop-subtle transition-opacity duration-200 motion-reduce:transition-none ${
           shown ? 'opacity-100' : 'pointer-events-none opacity-0'
         }`}
       />
@@ -201,7 +202,7 @@ export function ChatDock() {
         role="dialog"
         aria-modal="true"
         aria-label="Chat"
-        className={`fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-slate-200 bg-white shadow-xl transition-transform duration-200 ease-out motion-reduce:transition-none sm:max-w-[30rem] ${
+        className={`fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-divider bg-surface shadow-xl transition-transform duration-200 ease-out motion-reduce:transition-none sm:max-w-[30rem] ${
           shown ? 'translate-x-0' : 'translate-x-full'
         }`}
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
@@ -343,16 +344,16 @@ function ChatView({
       {/* Header */}
       <div
         className={clsx(
-          'flex shrink-0 items-center gap-1 border-b border-slate-100 sm:gap-2',
+          'flex shrink-0 items-center gap-1 border-b border-divider-soft sm:gap-2',
           isWorkspace ? 'px-4 py-3 sm:px-5' : 'px-3 py-2.5',
         )}
       >
         {isWorkspace ? (
-          <span className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700 sm:flex">
+          <span className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-tint text-accent-strong sm:flex">
             <MessageSquare className="h-4 w-4" />
           </span>
         ) : (
-          <MessageSquare className="h-4 w-4 shrink-0 text-brand-600" />
+          <MessageSquare className="h-4 w-4 shrink-0 text-accent" />
         )}
         <div className="min-w-0 flex-1">
           {editingTitle ? (
@@ -366,7 +367,7 @@ function ChatView({
                 if (e.key === 'Escape') setEditingTitle(false)
               }}
               aria-label="Chat title"
-              className="w-full rounded border border-slate-200 px-1.5 py-0.5 text-base font-semibold text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:text-sm"
+              className="w-full rounded border border-divider px-1.5 py-0.5 text-base font-semibold text-ink focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent sm:text-sm"
             />
           ) : (
             <button
@@ -378,18 +379,18 @@ function ChatView({
               }}
               disabled={!chat.chatId}
               title={chat.chatId ? 'Rename chat' : undefined}
-              className="group flex w-full min-w-0 items-center gap-1.5 rounded text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              className="group flex w-full min-w-0 items-center gap-1.5 rounded text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             >
-              <span className="truncate text-sm font-semibold text-slate-900">
+              <span className="truncate text-sm font-semibold text-ink">
                 {chat.title || 'New conversation'}
               </span>
               {chat.chatId && (
-                <Pencil className="h-3 w-3 shrink-0 text-slate-300 group-hover:text-slate-500" />
+                <Pencil className="h-3 w-3 shrink-0 text-disabled group-hover:text-muted" />
               )}
             </button>
           )}
           {isWorkspace && (
-            <p className="mt-0.5 hidden text-xs text-slate-500 sm:block">
+            <p className="mt-0.5 hidden text-xs text-muted sm:block">
               {chat.running
                 ? 'Analysis continues if you leave this screen'
                 : 'Private · saved automatically'}
@@ -437,7 +438,7 @@ function ChatView({
       {/* Settings */}
       <div
         className={clsx(
-          'shrink-0 space-y-2 border-b border-slate-100',
+          'shrink-0 space-y-2 border-b border-divider-soft',
           isWorkspace ? 'px-4 py-2.5 sm:px-5' : 'px-3 py-2.5',
         )}
       >
@@ -476,7 +477,7 @@ function ChatView({
               disabled={chat.running}
               placeholder="model id"
               aria-label="Custom model id"
-              className="h-8 w-32 rounded-lg border border-slate-200 bg-white px-2 text-base text-slate-900 placeholder:text-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:text-xs"
+              className="h-8 w-32 rounded-lg border border-divider bg-surface px-2 text-base text-ink placeholder:text-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent sm:text-xs"
             />
           )}
           {efforts.length > 0 && (
@@ -499,12 +500,12 @@ function ChatView({
             type="button"
             onClick={() => setShowAdvanced((v) => !v)}
             aria-expanded={showAdvanced}
-            className="inline-flex min-h-8 items-center gap-1 rounded px-1 text-xs font-medium text-slate-500 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            className="inline-flex min-h-8 items-center gap-1 rounded px-1 text-xs font-medium text-muted hover:text-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
             <SlidersHorizontal className="h-3.5 w-3.5" /> Analysis prompt
           </button>
           {modelInfo && !modelInfo.reachable && (
-            <span className="text-xs font-medium text-amber-600">
+            <span className="text-xs font-medium text-warning">
               {chat.backend === 'copilot' ? 'Copilot CLI not found' : `${chat.backend} not reachable`}
             </span>
           )}
@@ -516,17 +517,17 @@ function ChatView({
               onChange={(e) => chat.setWorkoutPrompt(e.target.value)}
               rows={3}
               aria-label="Per-workout analysis prompt"
-              className="w-full resize-none rounded-lg border border-slate-200 p-2 text-base text-slate-700 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:resize-y sm:text-xs"
+              className="w-full resize-none rounded-lg border border-divider p-2 text-base text-strong focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent sm:resize-y sm:text-xs"
             />
             <div className="flex items-center justify-between gap-2">
-              <p className="text-[11px] text-slate-500">
+              <p className="text-[11px] text-muted">
                 Prompt for each per-workout analysis when comparing 2+ workouts.
               </p>
               {config?.workout_prompt_default && chat.workoutPrompt !== config.workout_prompt_default && (
                 <button
                   type="button"
                   onClick={() => chat.setWorkoutPrompt(config.workout_prompt_default)}
-                  className="shrink-0 rounded text-[11px] font-medium text-brand-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                  className="shrink-0 rounded text-[11px] font-medium text-accent-strong hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 >
                   Reset
                 </button>
@@ -540,7 +541,7 @@ function ChatView({
       {attachedCount > 0 && (
         <div
           className={clsx(
-            'flex shrink-0 flex-wrap items-center gap-1.5 border-b border-slate-100 py-2',
+            'flex shrink-0 flex-wrap items-center gap-1.5 border-b border-divider-soft py-2',
             isWorkspace ? 'px-4 sm:px-5' : 'px-3',
           )}
         >
@@ -549,14 +550,14 @@ function ChatView({
             return (
               <span
                 key={a.id}
-                className="inline-flex items-center gap-1 rounded-full bg-brand-50 py-0.5 pl-2 pr-1 text-xs font-medium text-brand-700"
+                className="inline-flex items-center gap-1 rounded-full bg-accent-tint py-0.5 pl-2 pr-1 text-xs font-medium text-accent-strong"
               >
                 {label} · {formatDate(a.start_time)}
                 <button
                   type="button"
                   onClick={() => chat.toggleActivity(a.id)}
                   aria-label={`Detach ${label}`}
-                  className="rounded-full p-0.5 text-brand-700/70 hover:bg-brand-100 hover:text-brand-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                  className="rounded-full p-0.5 text-accent-subdued hover:bg-accent-tint-strong hover:text-accent-deep focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -565,7 +566,7 @@ function ChatView({
           })}
           {/* Ids whose activity summary isn't loaded still count as attached. */}
           {attachedCount > attached.length && (
-            <span className="text-xs text-slate-500">
+            <span className="text-xs text-muted">
               +{attachedCount - attached.length} more
             </span>
           )}
@@ -585,9 +586,9 @@ function ChatView({
 
       {/* Composer */}
       {isWorkspace ? (
-        <div className="shrink-0 border-t border-slate-100 bg-slate-50/70 p-3 sm:p-4">
+        <div className="shrink-0 border-t border-divider-soft bg-surface-muted p-3 sm:p-4">
           <div className="mx-auto max-w-3xl">
-            <div className="rounded-xl border border-slate-300 bg-white p-2 transition-colors focus-within:border-brand-500 focus-within:ring-1 focus-within:ring-brand-500 motion-reduce:transition-none">
+            <div className="rounded-xl border border-divider-strong bg-surface p-2 transition-colors focus-within:border-accent focus-within:ring-1 focus-within:ring-accent motion-reduce:transition-none">
               <textarea
                 ref={inputRef}
                 value={input}
@@ -605,10 +606,10 @@ function ChatView({
                     : 'Ask anything about your training…'
                 }
                 aria-label="Message"
-                className="max-h-40 min-h-[4.5rem] w-full resize-none border-0 bg-transparent px-2 py-1.5 text-base text-slate-900 placeholder:text-slate-500 focus:outline-none sm:resize-y sm:text-sm"
+                className="max-h-40 min-h-[4.5rem] w-full resize-none border-0 bg-transparent px-2 py-1.5 text-base text-ink placeholder:text-muted focus:outline-none sm:resize-y sm:text-sm"
               />
-              <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-1 pt-2">
-                <span className="text-xs text-slate-500">Enter to send · Shift+Enter for a new line</span>
+              <div className="flex items-center justify-between gap-3 border-t border-divider-soft px-1 pt-2">
+                <span className="text-xs text-muted">Enter to send · Shift+Enter for a new line</span>
                 {chat.running ? (
                   <Button
                     variant="secondary"
@@ -627,7 +628,7 @@ function ChatView({
               </div>
             </div>
             {chat.running && (
-              <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
+              <p className="mt-2 flex items-center gap-1.5 text-xs text-muted">
                 <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
                 {chat.stopping ? 'Stopping analysis…' : 'Running in the background…'}
               </p>
@@ -635,7 +636,7 @@ function ChatView({
           </div>
         </div>
       ) : (
-        <div className="shrink-0 border-t border-slate-100 p-3">
+        <div className="shrink-0 border-t border-divider-soft p-3">
           <div className="flex items-end gap-2">
             <textarea
               ref={inputRef}
@@ -654,7 +655,7 @@ function ChatView({
                   : 'Ask anything — e.g. “compare my last 3 long runs”'
               }
               aria-label="Message"
-              className="max-h-32 min-h-[44px] flex-1 resize-none rounded-lg border border-slate-200 p-2.5 text-base placeholder:text-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:resize-y sm:text-sm"
+              className="max-h-32 min-h-[44px] flex-1 resize-none rounded-lg border border-divider p-2.5 text-base placeholder:text-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent sm:resize-y sm:text-sm"
             />
             {chat.running ? (
               <Button
@@ -672,7 +673,7 @@ function ChatView({
             )}
           </div>
           {chat.running && (
-            <p className="mt-1.5 flex items-center gap-1.5 text-xs text-slate-500">
+            <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted">
               <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
               {chat.stopping ? 'Stopping analysis…' : 'Running in the background…'}
             </p>
@@ -685,13 +686,13 @@ function ChatView({
           title="Conversation infographic"
           subtitle="A current visual summary; later corrections override earlier claims"
           icon={
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent-tint text-accent-strong">
               <Layers className="h-4 w-4" />
             </span>
           }
           size="wide"
           onClose={() => setShowInfographic(false)}
-          contentClassName="scrollbar-hidden flex-1 overflow-y-auto bg-slate-50/60 p-4"
+          contentClassName="scrollbar-hidden flex-1 overflow-y-auto bg-surface-muted p-4"
         >
           <InfographicView
             source={{
@@ -746,20 +747,20 @@ const ChatTranscript = memo(function ChatTranscript({
           <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
             <div
               className={clsx(
-                'flex items-center justify-center rounded-full bg-brand-50 text-brand-700',
+                'flex items-center justify-center rounded-full bg-accent-tint text-accent-strong',
                 isWorkspace ? 'h-14 w-14' : 'h-12 w-12',
               )}
             >
               <Sparkles className={isWorkspace ? 'h-6 w-6' : 'h-5 w-5'} />
             </div>
-            <p className={clsx('font-semibold text-slate-900', isWorkspace ? 'text-base' : 'text-sm')}>
+            <p className={clsx('font-semibold text-ink', isWorkspace ? 'text-base' : 'text-sm')}>
               {attachedCount > 0
                 ? attachedCount === 1
                   ? 'What do you want to understand about this workout?'
                   : `What do you want to understand about these ${attachedCount} workouts?`
                 : 'What do you want to understand about your training?'}
             </p>
-            <p className={clsx('text-sm text-slate-500', isWorkspace ? 'max-w-md' : 'max-w-xs')}>
+            <p className={clsx('text-sm text-muted', isWorkspace ? 'max-w-md' : 'max-w-xs')}>
               {attachedCount > 0
                 ? 'Ask in your own words. The analysis keeps running if you leave, and the conversation stays available for later.'
                 : isWorkspace
@@ -772,7 +773,7 @@ const ChatTranscript = memo(function ChatTranscript({
                   key={suggestion}
                   type="button"
                   onClick={() => onSubmit(suggestion)}
-                  className="min-h-11 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 motion-reduce:transition-none"
+                  className="min-h-11 rounded-full border border-divider bg-surface-muted px-4 py-2 text-xs font-medium text-copy transition-colors hover:bg-hover hover:text-ink-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-accent motion-reduce:transition-none"
                 >
                   {suggestion}
                 </button>
@@ -782,10 +783,14 @@ const ChatTranscript = memo(function ChatTranscript({
         ) : (
           <div className="space-y-5">
             {messages.map((message) => (
-              <MessageBubble key={message.id} msg={message} running={running} />
+              <MessageBubble
+                key={message.id}
+                msg={message}
+                running={running && message.id === messages[messages.length - 1]?.id}
+              />
             ))}
             {error && (
-              <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              <div role="alert" className="rounded-lg border border-danger-divider bg-danger-tint p-3 text-sm text-danger-strong">
                 {error}
               </div>
             )}
@@ -816,11 +821,11 @@ function HistoryView({ mode, onClose }: { mode: ChatSurfaceMode; onClose: () => 
 
   return (
     <>
-      <div className="flex items-center gap-1 border-b border-slate-100 px-2 py-2.5">
+      <div className="flex items-center gap-1 border-b border-divider-soft px-2 py-2.5">
         <IconButton label="Back to conversation" onClick={onClose}>
           <ChevronLeft className="h-4 w-4" />
         </IconButton>
-        <span className="flex-1 text-sm font-semibold text-slate-900">Saved chats</span>
+        <span className="flex-1 text-sm font-semibold text-ink">Saved chats</span>
         <IconButton
           label="New chat"
           onClick={() => {
@@ -833,15 +838,15 @@ function HistoryView({ mode, onClose }: { mode: ChatSurfaceMode; onClose: () => 
       </div>
 
       {showSearch && (
-        <div className="border-b border-slate-100 px-3 py-2">
+        <div className="border-b border-divider-soft px-3 py-2">
           <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-faint" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search chats…"
               aria-label="Search saved chats"
-              className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-8 pr-2 text-base text-slate-900 placeholder:text-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:text-sm"
+              className="h-9 w-full rounded-lg border border-divider bg-surface pl-8 pr-2 text-base text-ink placeholder:text-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent sm:text-sm"
             />
           </div>
         </div>
@@ -851,32 +856,32 @@ function HistoryView({ mode, onClose }: { mode: ChatSurfaceMode; onClose: () => 
         {chat.chatsLoading ? (
           <div className="space-y-2 p-3">
             {[0, 1, 2, 3].map((i) => (
-              <div key={i} className="h-12 animate-pulse rounded-lg bg-slate-100" />
+              <div key={i} className="h-12 animate-pulse rounded-lg bg-skeleton" />
             ))}
           </div>
         ) : chat.chats.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 px-8 text-center">
-            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-100 text-slate-400">
+            <div className="flex h-11 w-11 items-center justify-center rounded-full border border-divider-soft bg-surface-subtle text-faint">
               <MessageSquare className="h-5 w-5" />
             </div>
-            <p className="text-sm font-medium text-slate-700">No saved chats yet</p>
-            <p className="text-sm text-slate-500">
+            <p className="text-sm font-medium text-strong">No saved chats yet</p>
+            <p className="text-sm text-muted">
               Every conversation you start is saved here automatically so you can pick it up later.
             </p>
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-1 px-8 text-center">
-            <p className="text-sm font-medium text-slate-700">No matches</p>
-            <p className="text-sm text-slate-500">No saved chats contain “{query.trim()}”.</p>
+            <p className="text-sm font-medium text-strong">No matches</p>
+            <p className="text-sm text-muted">No saved chats contain “{query.trim()}”.</p>
           </div>
         ) : (
           <div className="pb-3">
             {groups.map((g) => (
               <section key={g.key}>
-                <h3 className="sticky top-0 z-10 bg-white/90 px-3 pb-1 pt-3 text-xs font-medium text-slate-500 backdrop-blur">
+                <h3 className="sticky top-0 z-10 bg-chrome px-3 pb-1 pt-3 text-xs font-medium text-muted backdrop-blur">
                   {g.label}
                 </h3>
-                <ul className="divide-y divide-slate-100">
+                <ul className="divide-y divide-divider-soft">
                   {g.items.map((c) => (
                     <ChatRow
                       key={c.id}
@@ -920,17 +925,17 @@ function ChatRow({
   onConfirmDelete: () => void
 }) {
   return (
-    <li className={active ? 'bg-brand-50/50' : ''}>
-      <div className="group flex items-stretch transition-colors hover:bg-slate-50 motion-reduce:transition-none">
+    <li className={active ? 'bg-accent-tint' : ''}>
+      <div className="group flex items-stretch transition-colors hover:bg-hover motion-reduce:transition-none">
         <button
           type="button"
           onClick={onResume}
-          className="min-w-0 flex-1 px-3 py-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500"
+          className="min-w-0 flex-1 px-3 py-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
         >
           <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium text-slate-800">{c.title}</span>
+            <span className="truncate text-sm font-medium text-ink-soft">{c.title}</span>
             {active && (
-              <span className="shrink-0 rounded-full bg-brand-100 px-1.5 py-px text-xs font-semibold text-brand-700">
+              <span className="shrink-0 rounded-full bg-accent-tint-strong px-1.5 py-px text-xs font-semibold text-accent-strong">
                 Current
               </span>
             )}
@@ -941,7 +946,7 @@ function ChatRow({
               </span>
             )}
           </div>
-          <div className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500">
+          <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted">
             <span>{relativeTime(c.updated_at)}</span>
             <span aria-hidden="true">·</span>
             <span>
@@ -962,14 +967,14 @@ function ChatRow({
               <button
                 type="button"
                 onClick={onConfirmDelete}
-                className="rounded-md px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                className="rounded-md px-2 py-1 text-xs font-semibold text-danger hover:bg-danger-tint focus:outline-none focus-visible:ring-2 focus-visible:ring-danger-soft"
               >
                 Delete
               </button>
               <button
                 type="button"
                 onClick={onCancelDelete}
-                className="rounded-md px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                className="rounded-md px-2 py-1 text-xs font-medium text-muted hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               >
                 Cancel
               </button>
@@ -979,7 +984,7 @@ function ChatRow({
               type="button"
               onClick={onAskDelete}
               aria-label={`Delete chat: ${c.title}`}
-              className="rounded-md p-1.5 text-slate-300 transition-colors hover:bg-slate-100 hover:text-red-600 focus:text-red-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 motion-reduce:transition-none"
+              className="rounded-md p-1.5 text-disabled transition-colors hover:bg-hover hover:text-danger focus:text-danger focus:outline-none focus-visible:ring-2 focus-visible:ring-accent motion-reduce:transition-none"
             >
               <Trash2 className="h-4 w-4" />
             </button>
@@ -1014,7 +1019,7 @@ function IconButton({
       aria-haspopup={dialog ? 'dialog' : undefined}
       aria-expanded={dialog ? expanded : undefined}
       title={label}
-      className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-40"
+      className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-muted hover:bg-hover hover:text-ink-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
     >
       {children}
     </button>
@@ -1024,23 +1029,23 @@ function IconButton({
 function StepList({ steps, running }: { steps: MapStep[]; running: boolean }) {
   const allDone = steps.length > 0 && steps.every((s) => s.state === 'done')
   return (
-    <div className="mb-2 space-y-1 rounded-lg border border-slate-100 bg-slate-50/70 p-2.5">
+    <div className="mb-2 space-y-1 rounded-lg border border-divider-soft bg-surface-muted p-2.5">
       {steps.map((s) => (
         <div key={s.index} className="flex items-center gap-2 text-xs">
           {s.state === 'done' ? (
-            <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" />
+            <Check className="h-3.5 w-3.5 shrink-0 text-accent" />
           ) : (
-            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-slate-400 motion-reduce:animate-none" />
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-faint motion-reduce:animate-none" />
           )}
-          <span className="truncate text-slate-600">
+          <span className="truncate text-copy">
             {s.state === 'done' ? (s.reused ? 'Reused' : 'Analyzed') : 'Analyzing'} {s.label}
           </span>
         </div>
       ))}
       {allDone && running && (
         <div className="flex items-center gap-2 text-xs">
-          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-slate-400 motion-reduce:animate-none" />
-          <span className="text-slate-600">Synthesizing across {steps.length} workouts…</span>
+          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-faint motion-reduce:animate-none" />
+          <span className="text-copy">Synthesizing across {steps.length} workouts…</span>
         </div>
       )}
     </div>
@@ -1057,7 +1062,7 @@ const MessageBubble = memo(function MessageBubble({
   if (msg.role === 'user') {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] whitespace-pre-wrap rounded-xl rounded-br-sm bg-brand-600 px-3.5 py-2 text-sm text-white">
+        <div className="max-w-[85%] whitespace-pre-wrap rounded-xl rounded-br-sm bg-action px-3.5 py-2 text-sm text-on-action">
           {msg.content}
         </div>
       </div>
@@ -1066,10 +1071,16 @@ const MessageBubble = memo(function MessageBubble({
   return (
     <div className="min-w-0">
       {msg.steps && msg.steps.length > 0 && <StepList steps={msg.steps} running={running} />}
+      <ThinkingDisclosure
+        summary={msg.thinkingSummary}
+        thinking={msg.thinking}
+        running={running}
+        className="mb-3"
+      />
       {msg.content ? (
         <MarkdownView>{msg.content}</MarkdownView>
       ) : !msg.steps?.length && running ? (
-        <p className="text-sm text-slate-500">Analysis is running in the background…</p>
+        <p className="text-sm text-muted">Analysis is running in the background…</p>
       ) : null}
     </div>
   )

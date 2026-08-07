@@ -86,8 +86,10 @@ _RESIZE_TEMPLATE = (
 )
 
 _BASE_STYLE = (
+    ":root{color-scheme:light dark;}"
     "body{margin:0;padding:20px;font-family:Inter,system-ui,-apple-system,'Segoe UI',Roboto,"
     "sans-serif;color:#0f172a;background:#ffffff;line-height:1.5;}"
+    "@media(prefers-color-scheme:dark){body{color:#f8fafc;background:#000000;}}"
 )
 
 # Runtime compatibility rules apply to both newly generated and already-cached HTML.
@@ -95,12 +97,22 @@ _BASE_STYLE = (
 # track/fill rule repairs a common model output bug where percentage-sized <span> fills
 # stay inline and therefore render at 0x0.
 _RUNTIME_STYLE = (
+    ":root{color-scheme:light dark;}"
     "*{scrollbar-width:none;-ms-overflow-style:none;}"
     "*::-webkit-scrollbar{display:none;width:0;height:0;}"
     ".track>.fill{display:block;height:100%;min-width:0;background:#64748b;}"
     ".track>.fill.on,.track>.fill.current{background:#059669;}"
     ".track>.fill.caution{background:#d97706;}"
     ".metrics>:has(.accent),.metrics>.hero,.metric.hero{background:#ecfdf5;}"
+    "@media(prefers-color-scheme:dark){"
+    "html,body{color:#f8fafc!important;background:#000000!important;}"
+    "hr,table,th,td,.card,.callout,.panel,.metric,.metrics>*{border-color:rgba(255,255,255,.22)!important;}"
+    ".track{background:rgba(255,255,255,.14)!important;}"
+    ".track>.fill{background:#94a3b8;}"
+    ".track>.fill.on,.track>.fill.current{background:#34d399;}"
+    ".track>.fill.caution{background:#fbbf24;}"
+    ".metrics>:has(.accent),.metrics>.hero,.metric.hero{background:rgba(5,150,105,.16);}"
+    "}"
 )
 
 

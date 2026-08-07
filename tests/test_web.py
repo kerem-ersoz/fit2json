@@ -205,6 +205,86 @@ def test_analyze_streams_and_saves(client, monkeypatch):
     assert len(entries) == 1
 
 
+def test_analyze_streams_expandable_thinking_without_saving_tool_narration(client, monkeypatch):
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+
+    def fake_stream(prompt, workout_paths, event_handler=None, **kwargs):
+        assert event_handler is not None
+        event_handler({"type": "assistant.intent", "data": {"intent": "Inspecting workout evidence"}})
+        yield ""
+        event_handler(
+            {
+                "type": "assistant.reasoning_delta",
+                "data": {"reasoningId": "r1", "deltaContent": "The pace stayed controlled. "},
+            }
+        )
+        yield ""
+        event_handler(
+            {
+                "type": "assistant.message_delta",
+                "data": {"messageId": "m1", "deltaContent": "I will inspect the file."},
+            }
+        )
+        yield ""
+        event_handler(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m1",
+                    "content": "I will inspect the file.",
+                    "toolRequests": [{"toolCallId": "t1", "name": "view"}],
+                },
+            }
+        )
+        yield ""
+        event_handler(
+            {
+                "type": "assistant.reasoning",
+                "data": {
+                    "reasoningId": "r1",
+                    "content": "The pace stayed controlled. Heart rate supports an aerobic effort.",
+                },
+            }
+        )
+        yield ""
+        event_handler(
+            {
+                "type": "assistant.message_delta",
+                "data": {"messageId": "m2", "deltaContent": "## Analysis\nLooking strong!"},
+            }
+        )
+        yield ""
+        event_handler(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m2",
+                    "content": "## Analysis\nLooking strong!",
+                    "toolRequests": [],
+                },
+            }
+        )
+        yield "## Analysis\nLooking strong!"
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+
+    aid = client.get("/api/activities").json()[0]["id"]
+    response = client.post("/api/analyze", json={"activity_id": aid, "prompt": "How did I do?"})
+
+    assert response.status_code == 200
+    assert "event: thinking" in response.text
+    assert "Inspecting workout evidence" in response.text
+    assert "Heart rate supports an aerobic effort." in response.text
+    assert "event: replace" in response.text
+    assert "I will inspect the file." in response.text  # live preview before the tool request resolved
+
+    saved = client.get(f"/api/activities/{aid}/analyses").json()["analyses"][0]["content"]
+    assert "## Analysis\nLooking strong!" in saved
+    assert "I will inspect the file." not in saved
+
+
 def test_analyze_missing_activity(client):
     r = client.post("/api/analyze", json={"activity_id": "nope", "prompt": "hi"})
     assert r.status_code == 404
@@ -245,11 +325,49 @@ def test_analysis_run_continues_without_subscriber_and_replays(client, monkeypat
     calls = 0
     monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
 
-    def fake_stream(prompt, workout_paths, **kwargs):
+    def fake_stream(prompt, workout_paths, event_handler=None, **kwargs):
         nonlocal calls
         calls += 1
         started.set()
         assert release.wait(timeout=2)
+        assert event_handler is not None
+        event_handler({"type": "assistant.intent", "data": {"intent": "Reviewing workout evidence"}})
+        yield ""
+        event_handler(
+            {
+                "type": "assistant.reasoning",
+                "data": {"reasoningId": "r1", "content": "Pace and heart rate stayed controlled."},
+            }
+        )
+        yield ""
+        event_handler(
+            {
+                "type": "assistant.message_delta",
+                "data": {"messageId": "m1", "deltaContent": "I will inspect the file."},
+            }
+        )
+        yield ""
+        event_handler(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m1",
+                    "content": "I will inspect the file.",
+                    "toolRequests": [{"toolCallId": "t1", "name": "view"}],
+                },
+            }
+        )
+        yield ""
+        event_handler(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m2",
+                    "content": "Background answer",
+                    "toolRequests": [],
+                },
+            }
+        )
         yield "Background answer"
 
     monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
@@ -298,11 +416,16 @@ def test_analysis_run_continues_without_subscriber_and_replays(client, monkeypat
         "How am I doing?",
         "Background answer",
     ]
+    assert finished_chat["messages"][1]["thinking_summary"] == "Reviewing workout evidence"
+    assert finished_chat["messages"][1]["thinking"] == "Pace and heart rate stayed controlled."
 
     replay = client.get("/api/analysis-runs/run-background/events")
     assert replay.status_code == 200
     assert "id: 1" in replay.text
     assert "Background answer" in replay.text
+    assert "event: thinking" in replay.text
+    assert "event: replace" in replay.text
+    assert "I will inspect the file." in replay.text
     assert "event: done" in replay.text
 
     terminal_only = client.get(
@@ -462,7 +585,13 @@ def test_chats_empty_then_upsert_and_resume(client):
         "activity_ids": ["a1", "a2"],
         "messages": [
             {"id": "m1", "role": "user", "content": "How did my week go?"},
-            {"id": "m2", "role": "assistant", "content": "Strong and consistent."},
+            {
+                "id": "m2",
+                "role": "assistant",
+                "content": "Strong and consistent.",
+                "thinking_summary": "Reviewing weekly consistency",
+                "thinking": "The volume and intensity were distributed evenly.",
+            },
         ],
     }
     r = client.put("/api/chats/chat-123", json=body)
@@ -485,6 +614,8 @@ def test_chats_empty_then_upsert_and_resume(client):
     full = client.get("/api/chats/chat-123").json()
     assert len(full["messages"]) == 2
     assert full["activity_ids"] == ["a1", "a2"]
+    assert full["messages"][1]["thinking_summary"] == "Reviewing weekly consistency"
+    assert full["messages"][1]["thinking"] == "The volume and intensity were distributed evenly."
 
 
 def test_chats_update_preserves_created_at_and_delete(client):
@@ -857,6 +988,9 @@ def test_infographic_view_serves_stashed_html(client, monkeypatch):
     assert ".track>.fill{display:block" in v.text
     assert ".track>.fill.current{background:#059669" in v.text
     assert ".track>.fill.caution{background:#d97706" in v.text
+    assert "@media(prefers-color-scheme:dark)" in v.text
+    assert "background:#000000!important" in v.text
+    assert ".track>.fill.current{background:#34d399" in v.text
 
 
 def test_infographic_view_unknown_token_404(client):

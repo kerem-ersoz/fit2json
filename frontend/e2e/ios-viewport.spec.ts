@@ -132,6 +132,44 @@ test('publishes standalone Home Screen app metadata', async ({ page }) => {
   })
 })
 
+test('matches the system theme with true-black dark surfaces', async ({ page }) => {
+  const theme = () =>
+    page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement)
+      const header = document.querySelector('header')
+      return {
+        canvas: root.getPropertyValue('--color-canvas').trim(),
+        surface: root.getPropertyValue('--color-surface').trim(),
+        divider: root.getPropertyValue('--color-divider').trim(),
+        accent: root.getPropertyValue('--color-accent').trim(),
+        body: getComputedStyle(document.body).backgroundColor,
+        header: header ? getComputedStyle(header).backgroundColor : '',
+      }
+    })
+
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await page.goto('/')
+  await expect(page.locator('header')).toBeVisible()
+
+  const dark = await theme()
+  expect(dark).toMatchObject({
+    canvas: '#000000',
+    surface: '#000000',
+    divider: 'rgb(255 255 255 / 0.22)',
+    accent: '#34d399',
+  })
+  expect(dark.body).toMatch(/^rgb\(0,\s*0,\s*0\)$/)
+  expect(dark.header).toMatch(/^rgba?\(0,\s*0,\s*0/)
+
+  await page.emulateMedia({ colorScheme: 'light' })
+  await expect.poll(theme).toMatchObject({
+    canvas: '#f8fafc',
+    surface: '#ffffff',
+    divider: '#e2e8f0',
+    accent: '#059669',
+  })
+})
+
 test('restores touch surfaces after browser chrome changes between tabs', async ({ page }) => {
   await emulateVisualViewport(page)
   await page.goto('/analyze')
@@ -227,10 +265,13 @@ test('keeps touch form controls above the iOS focus-zoom threshold', async ({ pa
   expect(fontSizes.every((size) => size >= 16)).toBe(true)
 })
 
-test('reconnects to a background analysis without starting it twice', async ({ page }) => {
+test('reconnects to background thinking without starting twice', async ({ page }) => {
   let runId = ''
   let startCalls = 0
   let eventConnections = 0
+  const summary = 'Reviewing pace and heart-rate evidence'
+  const reasoning =
+    'The opening pace was controlled while heart rate rose gradually. The finish stayed aerobic.'
 
   await page.route('**/api/analysis-runs', async (route) => {
     const body = route.request().postDataJSON() as {
@@ -261,18 +302,19 @@ test('reconnects to a background analysis without starting it twice', async ({ p
         status: 200,
         contentType: 'text/event-stream',
         body:
-          'id: 1\nevent: start\ndata: {"backend":"ollama"}\n\n' +
-          'id: 2\nevent: delta\ndata: {"text":"Part one "}\n\n',
+          'id: 1\nevent: start\ndata: {"backend":"copilot"}\n\n' +
+          `id: 2\nevent: thinking\ndata: ${JSON.stringify({ summary, text: reasoning })}\n\n` +
+          'id: 3\nevent: delta\ndata: {"text":"I will inspect the workout file."}\n\n',
       })
       return
     }
-    expect(url.searchParams.get('after')).toBe('2')
+    expect(url.searchParams.get('after')).toBe('3')
     await route.fulfill({
       status: 200,
       contentType: 'text/event-stream',
       body:
-        'id: 3\nevent: delta\ndata: {"text":"part two."}\n\n' +
-        'id: 4\nevent: done\ndata: {"chars":18,"saved":null,"backend":"ollama"}\n\n',
+        'id: 4\nevent: replace\ndata: {"text":"A controlled aerobic session."}\n\n' +
+        'id: 5\nevent: done\ndata: {"chars":29,"saved":null,"backend":"copilot"}\n\n',
     })
   })
 
@@ -280,9 +322,79 @@ test('reconnects to a background analysis without starting it twice', async ({ p
   await page.getByRole('textbox', { name: 'Message' }).fill('Review my latest run')
   await page.getByRole('button', { name: 'Send' }).click()
 
-  await expect(page.getByText('Part one part two.')).toBeVisible()
+  const disclosure = page.locator('details').filter({ hasText: summary })
+  const detail = page.getByText(reasoning)
+  await expect(disclosure).toBeVisible()
+  await disclosure.locator('summary').tap()
+  await expect(detail).toBeVisible()
+  await expect(page.getByText('A controlled aerobic session.')).toBeVisible()
+  await expect(page.getByText('I will inspect the workout file.')).toBeHidden()
   expect(startCalls).toBe(1)
   expect(eventConnections).toBe(2)
   await expect(page.getByText('Running in the background…')).toBeHidden()
+  await expect(page.getByRole('button', { name: 'Send' })).toBeVisible()
+})
+
+test('discards provisional Copilot narration when a background run is stopped', async ({ page }) => {
+  const narration = 'I will inspect the workout file.'
+  let runId = ''
+  let releaseCancellation = () => {}
+  const cancellation = new Promise<void>((resolve) => {
+    releaseCancellation = resolve
+  })
+
+  await page.route('**/api/analysis-runs', async (route) => {
+    runId = (route.request().postDataJSON() as { run_id: string }).run_id
+    await route.fulfill({
+      json: {
+        id: runId,
+        status: 'running',
+        error: null,
+        last_event_id: 0,
+        created_at: new Date().toISOString(),
+        finished_at: null,
+      },
+    })
+  })
+  await page.route('**/api/analysis-runs/*/cancel', async (route) => {
+    releaseCancellation()
+    await route.fulfill({
+      json: {
+        id: runId,
+        status: 'cancelling',
+        error: null,
+        last_event_id: 2,
+        created_at: new Date().toISOString(),
+        finished_at: null,
+      },
+    })
+  })
+  await page.route('**/api/analysis-runs/*/events?*', async (route) => {
+    const after = new URL(route.request().url()).searchParams.get('after')
+    if (after === '0') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body:
+          'id: 1\nevent: start\ndata: {"backend":"copilot"}\n\n' +
+          `id: 2\nevent: delta\ndata: ${JSON.stringify({ text: narration })}\n\n`,
+      })
+      return
+    }
+    await cancellation
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: 'id: 3\nevent: cancelled\ndata: {}\n\n',
+    })
+  })
+
+  await page.goto('/analyze')
+  await page.getByRole('textbox', { name: 'Message' }).fill('Review this workout')
+  await page.getByRole('button', { name: 'Send' }).tap()
+  await expect(page.getByText(narration)).toBeVisible()
+
+  await page.getByRole('button', { name: 'Stop' }).tap()
+  await expect(page.getByText(narration)).toBeHidden()
   await expect(page.getByRole('button', { name: 'Send' })).toBeVisible()
 })

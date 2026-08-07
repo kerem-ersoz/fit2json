@@ -48,32 +48,32 @@ export class ErrorBoundary extends Component<Props, State> {
           this.props.compact ? 'h-full p-6' : 'min-h-[50vh] p-8'
         }`}
       >
-        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-red-50 text-red-600">
+        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-danger-tint text-danger">
           <RotateCcw className="h-6 w-6" />
         </div>
         <div>
-          <p className="text-sm font-semibold text-slate-900">
+          <p className="text-sm font-semibold text-ink">
             {this.props.label ?? 'Something went wrong'}
           </p>
-          <p className="mx-auto mt-1 max-w-sm text-sm text-slate-500">
+          <p className="mx-auto mt-1 max-w-sm text-sm text-muted">
             This view hit an unexpected error. You can retry or reload the app.
           </p>
         </div>
-        <p className="max-w-md break-words rounded-lg border border-red-200 bg-red-50 px-3 py-2 font-mono text-xs text-red-700">
+        <p className="max-w-md break-words rounded-lg border border-danger-divider bg-danger-tint px-3 py-2 font-mono text-xs text-danger-strong">
           {error.message || String(error)}
         </p>
         <div className="flex gap-2">
           <button
             type="button"
             onClick={() => this.setState({ error: null })}
-            className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-divider bg-surface px-3 text-sm font-medium text-strong hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
             Try again
           </button>
           <button
             type="button"
             onClick={() => window.location.reload()}
-            className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg bg-brand-600 px-3 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg bg-action px-3 text-sm font-medium text-on-action hover:bg-action-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
             Reload
           </button>

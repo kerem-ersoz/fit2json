@@ -22,7 +22,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional
 
 import click
 
@@ -77,12 +77,20 @@ INFOGRAPHIC_SYSTEM_PROMPT = (
     "height when the material allows; do not make the user scroll through a second report.\n\n"
     "DESIGN LANGUAGE — match it exactly (this product is 'a quiet instrument': calm, precise, "
     "data-forward; the data is the hero and the chrome recedes):\n"
-    "- Surface #ffffff. Text: #0f172a for headings, #475569 for body, #64748b for muted labels. "
-    "Structure with hairline 1px borders (#e2e8f0) and generous whitespace — NOT with color.\n"
+    "- Light theme: surface #ffffff; text #0f172a for headings, #475569 for body, and #64748b "
+    "for muted labels. Structure with hairline 1px borders (#e2e8f0) and generous whitespace — "
+    "NOT with color.\n"
+    "- Dark theme is first-class and follows the system setting. Declare reusable palette values "
+    "as CSS custom properties, then override them inside `@media (prefers-color-scheme: dark)`: "
+    "canvas and every neutral surface become true black #000000; headings #f8fafc; body #cbd5e1; "
+    "muted labels #94a3b8; dividers rgba(255,255,255,.22). Do not use gray filled surfaces in dark "
+    "mode; separate regions with those white hairlines instead.\n"
     "- Use a restrained semantic data palette, not monochrome and not decorative color: Signal "
     "Green #059669 (deep #047857, tint #ecfdf5) means current, improved, desired, or the primary "
     "finding; Slate #64748b (light #cbd5e1, tint #f8fafc) means baseline, historical, or neutral; "
     "Caution Amber #d97706 (deep #92400e, tint #fffbeb) means overload, imbalance, or warning only.\n"
+    "- In dark mode, lift Signal Green text and icons to #34d399, use rgba(5,150,105,.16) for its "
+    "tint, and use dark translucent semantic tints for cautions. Keep the underlying surface black.\n"
     "- In every comparison visual, assign those roles consistently: baseline in slate, current or "
     "target in green, and a genuinely risky value in amber. Keep the text label and value visible "
     "so color is never the only cue. Use light role tints for at most one key surface per section; "
@@ -112,8 +120,8 @@ INFOGRAPHIC_SYSTEM_PROMPT = (
     "It must render fully offline.\n"
     "- Use ONLY numbers and facts present in the provided analysis. Never invent data; if a value "
     "isn't stated, leave it out.\n"
-    "- Accessible: body text contrast >=4.5:1 on white. Fluid layout that works from ~360px to "
-    "~900px wide (use flex-wrap / min-width, not fixed pixel columns).\n"
+    "- Accessible: body text contrast >=4.5:1 in both system themes. Fluid layout that works from "
+    "~360px to ~900px wide (use flex-wrap / min-width, not fixed pixel columns).\n"
     "- Respond with ONLY the HTML — no markdown, no code fences, no commentary before or after."
 )
 
@@ -321,6 +329,7 @@ def stream_copilot(
     athlete_profile: Optional[str] = None,
     system_prompt: Optional[str] = None,
     final_instruction: Optional[str] = None,
+    event_handler: Optional[Callable[[dict], None]] = None,
     keepalive_interval: Optional[float] = None,
 ) -> Iterator[str]:
     """Yield analysis text chunks from the GitHub Copilot CLI subprocess.
@@ -328,13 +337,19 @@ def stream_copilot(
     Streams the CLI's stdout line by line so callers (CLI or web) can consume it
     incrementally. Raises ``click.ClickException`` if the CLI is missing or fails.
 
-    When ``silent`` is True, passes ``--silent`` so the CLI emits *only* the final
-    agent response — no tool-call trace or stats footer. Used by the web UI so saved
-    analyses are clean prose + charts. ``library_dir`` grants the agent access to the
-    whole workout library so it can find relevant workouts itself (freeform mode).
+    When ``silent`` is True, passes ``--silent`` so text-mode output contains only the
+    final agent response — no tool-call trace or stats footer. Structured mode still
+    receives JSON events, then filters durable answer text itself. ``library_dir`` grants
+    the agent access to the whole workout library so it can find relevant workouts itself
+    (freeform mode).
 
     ``system_prompt``/``final_instruction`` override the default coach persona and the
     "write markdown to stdout" trailer — used by the infographic pass to request raw HTML.
+
+    When ``event_handler`` is provided, the CLI emits JSONL session events. Display-safe
+    intent, reasoning, and message events are passed to the handler while this iterator
+    yields only completed root-agent answer text. Tool-call narration stays out of saved
+    analyses even though the web UI can preview and later discard it.
 
     ``--model`` is only passed when ``model`` is given, so an unset model falls back to
     the user's *configured* Copilot default (e.g. Opus). Forcing ``--model auto`` here
@@ -373,6 +388,12 @@ def stream_copilot(
             cmd += ["--context", "long_context"]
     if silent:
         cmd.append("--silent")
+    if event_handler is not None:
+        cmd += [
+            "--output-format", "json",
+            "--stream", "on",
+            "--enable-reasoning-summaries",
+        ]
     if reasoning_effort:
         cmd += ["--reasoning-effort", reasoning_effort]
     allow_dirs = {str(p.parent.resolve()) for p in workout_paths}
@@ -402,11 +423,63 @@ def stream_copilot(
     completed = False
     reader: Optional[threading.Thread] = None
     heartbeat = keepalive_interval if keepalive_interval and keepalive_interval > 0 else None
+    stream_error = ""
+
+    def process_stdout_line(line: str) -> Optional[str]:
+        nonlocal stream_error
+        if event_handler is None:
+            return line
+
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise click.ClickException(f"copilot CLI emitted invalid JSONL: {exc}") from exc
+        if not isinstance(event, dict):
+            return None
+
+        event_type = event.get("type")
+        data = event.get("data")
+        if event_type == "session.error" and isinstance(data, dict):
+            stream_error = str(data.get("message") or "Copilot session failed")
+
+        # Sub-agent output belongs in traces, not the athlete-facing answer/thinking panel.
+        if event.get("agentId") or not isinstance(data, dict):
+            return None
+        if event_type in {
+            "assistant.intent",
+            "assistant.reasoning",
+            "assistant.reasoning_delta",
+            "assistant.message_delta",
+            "assistant.message",
+        }:
+            event_handler(event)
+
+        # A completed message with tools is an intermediate tool-call turn. Only no-tool,
+        # response-phase messages are durable answer text.
+        if event_type == "assistant.message":
+            phase = str(data.get("phase") or "")
+            has_tools = bool(data.get("toolRequests"))
+            content = str(data.get("content") or "")
+            if content and not has_tools and phase not in {"thinking", "commentary"}:
+                return content
+            # Hand control back to the SSE adapter so it can discard any provisional
+            # message deltas immediately.
+            return ""
+        elif event_type in {
+            "assistant.intent",
+            "assistant.reasoning",
+            "assistant.reasoning_delta",
+            "assistant.message_delta",
+        }:
+            return ""
+        return None
 
     try:
         if heartbeat is None:
             for line in stdout:
-                yield line
+                output = process_stdout_line(line)
+                if output is not None:
+                    yield output
         else:
             messages: queue.Queue = queue.Queue()
 
@@ -435,7 +508,9 @@ def stream_copilot(
                     yield ""
                     continue
                 if kind == "line":
-                    yield value
+                    output = process_stdout_line(value)
+                    if output is not None:
+                        yield output
                 elif kind == "error":
                     raise value
                 else:
@@ -446,6 +521,8 @@ def stream_copilot(
         if returncode != 0:
             err = proc.stderr.read() if proc.stderr else ""
             raise click.ClickException(f"copilot CLI failed (exit {returncode}): {err.strip()}")
+        if stream_error:
+            raise click.ClickException(stream_error)
     finally:
         if not completed:
             _terminate_process_group(proc)

@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 TERMINAL_STATUSES = ("completed", "failed", "cancelled")
 _MAX_RETAINED_RUNS = 200
+FinishCallback = Callable[[str, str, Optional[str], str, str], None]
 
 
 def _now() -> str:
@@ -57,7 +58,7 @@ class AnalysisRun:
         run_id: str,
         source: Iterator[str],
         owner: Tuple[Optional[str], Optional[str]],
-        on_finish: Optional[Callable[[str, str, Optional[str]], None]] = None,
+        on_finish: Optional[FinishCallback] = None,
         on_terminal: Optional[Callable[["AnalysisRun"], None]] = None,
     ):
         self.id = run_id
@@ -68,7 +69,11 @@ class AnalysisRun:
         self._condition = Condition()
         self._cancel_requested = Event()
         self._events: List[Tuple[int, str]] = []
-        self._chunks: List[str] = []
+        self._content = ""
+        self._backend = ""
+        self._replace_seen = False
+        self._thinking_summary = ""
+        self._thinking = ""
         self._thread: Optional[Thread] = None
         self.status = "running"
         self.error: Optional[str] = None
@@ -91,7 +96,7 @@ class AnalysisRun:
     def claim_cancelled(
         self,
         owner: Tuple[Optional[str], Optional[str]],
-        on_finish: Optional[Callable[[str, str, Optional[str]], None]],
+        on_finish: Optional[FinishCallback],
         persist: Callable[[], None],
     ) -> bool:
         """Bind an unclaimed Stop-before-start tombstone to its late chat request."""
@@ -155,8 +160,21 @@ class AnalysisRun:
 
     def _append(self, frame: str, event: str, data: Dict[str, Any]) -> None:
         with self._condition:
-            if event == "delta":
-                self._chunks.append(str(data.get("text") or ""))
+            if event == "start":
+                self._backend = str(data.get("backend") or "")
+            elif event == "reduce":
+                self._content = ""
+                self._replace_seen = False
+                self._thinking_summary = ""
+                self._thinking = ""
+            elif event == "thinking":
+                self._thinking_summary = str(data.get("summary") or "")
+                self._thinking = str(data.get("text") or "")
+            elif event == "delta":
+                self._content += str(data.get("text") or "")
+            elif event == "replace":
+                self._content = str(data.get("text") or "")
+                self._replace_seen = True
             event_id = len(self._events) + 1
             self._events.append((event_id, frame))
             self._condition.notify_all()
@@ -167,10 +185,18 @@ class AnalysisRun:
         terminal_frame: str,
         error: Optional[str] = None,
     ) -> None:
-        content = "".join(self._chunks)
+        content = self._content
+        if status in ("failed", "cancelled") and self._backend == "copilot" and not self._replace_seen:
+            content = ""
         if self._on_finish is not None:
             try:
-                self._on_finish(status, content, error)
+                self._on_finish(
+                    status,
+                    content,
+                    error,
+                    self._thinking_summary,
+                    self._thinking,
+                )
             except Exception as exc:
                 logger.exception("Failed to persist analysis run %s", self.id)
                 status = "failed"
@@ -182,8 +208,6 @@ class AnalysisRun:
             self.status = status
             self.error = error
             self.finished_at = _now()
-            if event == "delta":
-                self._chunks.append(str(data.get("text") or ""))
             event_id = len(self._events) + 1
             self._events.append((event_id, terminal_frame))
             if self._on_terminal is not None:
@@ -209,7 +233,7 @@ class AnalysisRun:
                 if event == "ping":
                     continue
                 if event == "done":
-                    content = "".join(self._chunks)
+                    content = self._content
                     chars = data.get("chars")
                     if not content.strip() or (isinstance(chars, int) and chars <= 0):
                         message = "The model returned no response. Please try again."
@@ -262,7 +286,7 @@ class AnalysisRunRegistry:
         run_id: str,
         source: Iterator[str],
         owner: Tuple[Optional[str], Optional[str]],
-        on_finish: Optional[Callable[[str, str, Optional[str]], None]],
+        on_finish: Optional[FinishCallback],
     ) -> Tuple[AnalysisRun, bool]:
         with self._lock:
             existing = self._runs.get(run_id)

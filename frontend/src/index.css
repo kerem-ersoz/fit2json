@@ -3,7 +3,113 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
+  --color-canvas: #f8fafc;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f8fafc;
+  --color-surface-subtle: #f1f5f9;
+  --color-surface-translucent: rgb(255 255 255 / 0.6);
+  --color-chrome: rgb(255 255 255 / 0.94);
+  --color-hover: #f1f5f9;
+  --color-divider-soft: #f1f5f9;
+  --color-divider: #e2e8f0;
+  --color-divider-strong: #cbd5e1;
+  --color-skeleton: rgb(226 232 240 / 0.8);
+  --color-backdrop-subtle: rgb(15 23 42 / 0.2);
+  --color-backdrop: rgb(15 23 42 / 0.4);
+  --color-ink: #0f172a;
+  --color-ink-soft: #1e293b;
+  --color-strong: #334155;
+  --color-copy: #475569;
+  --color-muted: #64748b;
+  --color-faint: #94a3b8;
+  --color-disabled: #cbd5e1;
+  --color-accent: #059669;
+  --color-accent-strong: #047857;
+  --color-accent-deep: #065f46;
+  --color-accent-subdued: rgb(4 120 87 / 0.7);
+  --color-accent-tint: #ecfdf5;
+  --color-accent-tint-strong: #d1fae5;
+  --color-accent-muted: #6ee7b7;
+  --color-accent-divider: #a7f3d0;
+  --color-action: #059669;
+  --color-action-hover: #047857;
+  --color-on-action: #ffffff;
+  --color-ring-neutral: #94a3b8;
+  --color-danger: #dc2626;
+  --color-danger-soft: #ef4444;
+  --color-danger-strong: #b91c1c;
+  --color-danger-deep: #991b1b;
+  --color-danger-tint: #fef2f2;
+  --color-danger-divider: #fecaca;
+  --color-warning: #d97706;
+  --color-warning-strong: #b45309;
+  --color-code: #0f172a;
+  --color-code-text: #f1f5f9;
+  --color-zone-blue: #2563eb;
+  --color-zone-blue-tint: #eff6ff;
+  --color-zone-green: #16a34a;
+  --color-zone-green-tint: #f0fdf4;
+  --color-zone-orange: #ea580c;
+  --color-zone-orange-tint: #fff7ed;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --color-canvas: #000000;
+    --color-surface: #000000;
+    --color-surface-muted: #000000;
+    --color-surface-subtle: #000000;
+    --color-surface-translucent: rgb(0 0 0 / 0.72);
+    --color-chrome: rgb(0 0 0 / 0.94);
+    --color-hover: rgb(255 255 255 / 0.08);
+    --color-divider-soft: rgb(255 255 255 / 0.14);
+    --color-divider: rgb(255 255 255 / 0.22);
+    --color-divider-strong: rgb(255 255 255 / 0.34);
+    --color-skeleton: rgb(255 255 255 / 0.1);
+    --color-backdrop-subtle: rgb(0 0 0 / 0.6);
+    --color-backdrop: rgb(0 0 0 / 0.76);
+    --color-ink: #f8fafc;
+    --color-ink-soft: #f1f5f9;
+    --color-strong: #e2e8f0;
+    --color-copy: #cbd5e1;
+    --color-muted: #94a3b8;
+    --color-faint: #94a3b8;
+    --color-disabled: #64748b;
+    --color-accent: #34d399;
+    --color-accent-strong: #34d399;
+    --color-accent-deep: #6ee7b7;
+    --color-accent-subdued: rgb(52 211 153 / 0.75);
+    --color-accent-tint: rgb(5 150 105 / 0.16);
+    --color-accent-tint-strong: rgb(5 150 105 / 0.24);
+    --color-accent-muted: #065f46;
+    --color-accent-divider: rgb(52 211 153 / 0.45);
+    --color-action: #047857;
+    --color-action-hover: #065f46;
+    --color-ring-neutral: #cbd5e1;
+    --color-danger: #f87171;
+    --color-danger-soft: #f87171;
+    --color-danger-strong: #fca5a5;
+    --color-danger-deep: #fecaca;
+    --color-danger-tint: rgb(127 29 29 / 0.3);
+    --color-danger-divider: rgb(248 113 113 / 0.48);
+    --color-warning: #fbbf24;
+    --color-warning-strong: #fcd34d;
+    --color-code: #000000;
+    --color-zone-blue: #60a5fa;
+    --color-zone-blue-tint: rgb(37 99 235 / 0.18);
+    --color-zone-green: #4ade80;
+    --color-zone-green-tint: rgb(22 163 74 / 0.18);
+    --color-zone-orange: #fb923c;
+    --color-zone-orange-tint: rgb(234 88 12 / 0.18);
+  }
+
+  *,
+  *::before,
+  *::after {
+    --tw-ring-offset-color: #000000;
+  }
 }
 
 html,
@@ -19,13 +125,52 @@ body {
 }
 
 body {
-  @apply bg-slate-50 text-slate-900 antialiased;
+  @apply bg-canvas text-ink antialiased;
   position: fixed;
   top: 0;
   right: 0;
   bottom: 0;
   left: 0;
   width: 100%;
+}
+
+input:not([type='checkbox']):not([type='radio']):not([type='range']),
+textarea,
+select {
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-muted);
+}
+
+.activity-map .leaflet-bar a,
+.activity-map .leaflet-control-attribution {
+  border-color: var(--color-divider);
+  background: var(--color-chrome);
+  color: var(--color-copy);
+}
+
+.activity-map .leaflet-container {
+  background: var(--color-surface);
+}
+
+.activity-map .leaflet-bar a:hover,
+.activity-map .leaflet-bar a:focus {
+  background: var(--color-hover);
+  color: var(--color-ink);
+}
+
+.activity-map .leaflet-control-attribution a {
+  color: var(--color-accent-strong);
+}
+
+@media (prefers-color-scheme: dark) {
+  .activity-map .leaflet-tile {
+    filter: invert(0.92) hue-rotate(180deg) brightness(0.68) contrast(1.25) saturate(0.5);
+  }
 }
 
 @media (pointer: coarse) {

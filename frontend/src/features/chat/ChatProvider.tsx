@@ -20,11 +20,13 @@ import {
   type MapStep,
 } from '../../lib/api'
 
-/** A single conversation turn as held in memory (steps are live-only, not persisted). */
+/** A single conversation turn as held in memory (map steps are live-only). */
 export interface Msg {
   id: string
   role: 'user' | 'assistant'
   content: string
+  thinkingSummary?: string
+  thinking?: string
   steps?: MapStep[]
 }
 
@@ -122,6 +124,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const runIdRef = useRef<string | null>(null)
   const assistantIdRef = useRef<string | null>(null)
   const loadGenerationRef = useRef(0)
+  const committedRef = useRef<{ messageId: string; content: string } | null>(null)
   // Tracks the currently-active chat so a background save that resolves after the user
   // switched chats doesn't write its result onto the wrong conversation.
   const chatIdRef = useRef<string | null>(null)
@@ -172,7 +175,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
   const persist = useCallback(
     async (id: string, msgs: Msg[], snap: SaveSnapshot) => {
-      const cleaned = msgs.map((m) => ({ id: m.id, role: m.role, content: m.content }))
+      const cleaned = msgs.map((m) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        thinking_summary: m.thinkingSummary,
+        thinking: m.thinking,
+      }))
       const firstUser = cleaned.find((m) => m.role === 'user')?.content ?? ''
       try {
         const saved = await api.saveChat(id, {
@@ -195,6 +204,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
   const followRun = useCallback(
     async (id: string, runId: string, asstId: string, controller: AbortController) => {
+      let resolvedBackend = ''
       const isCurrent = () => chatIdRef.current === id && runIdRef.current === runId
       const settle = () => {
         if (runIdRef.current === runId) {
@@ -208,6 +218,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       await streamAnalysisRun(
         runId,
         {
+          onStart: (value) => {
+            resolvedBackend = value
+          },
           onStep: (step) => {
             if (!isCurrent()) return
             setMessages((current) =>
@@ -222,13 +235,39 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               }),
             )
           },
-          onDelta: (text) => {
+          onThinking: (info) => {
             if (!isCurrent()) return
             setMessages((current) =>
               current.map((message) =>
                 message.id === asstId
-                  ? { ...message, content: message.content + text }
+                  ? {
+                      ...message,
+                      thinkingSummary: info.summary || undefined,
+                      thinking: info.text || undefined,
+                    }
                   : message,
+              ),
+            )
+          },
+          onDelta: (text) => {
+            if (!isCurrent()) return
+            setMessages((current) =>
+              current.map((message) => {
+                if (message.id !== asstId) return message
+                const content = message.content + text
+                if (resolvedBackend !== 'copilot') {
+                  committedRef.current = { messageId: asstId, content }
+                }
+                return { ...message, content }
+              }),
+            )
+          },
+          onReplace: (text) => {
+            if (!isCurrent()) return
+            committedRef.current = { messageId: asstId, content: text }
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === asstId ? { ...message, content: text } : message,
               ),
             )
           },
@@ -237,33 +276,52 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               setRunning(false)
               setStopping(false)
               setError(null)
+              committedRef.current = null
             }
             settle()
           },
           onError: (message) => {
             if (isCurrent()) {
+              const committed =
+                committedRef.current?.messageId === asstId
+                  ? committedRef.current.content
+                  : ''
               setRunning(false)
               setStopping(false)
               setError(message)
               setMessages((current) =>
-                current.filter(
+                current
+                  .map((item) =>
+                    item.id === asstId ? { ...item, content: committed } : item,
+                  )
+                  .filter(
                   (item) =>
                     !(item.id === asstId && item.content === '' && !(item.steps?.length)),
                 ),
               )
+              committedRef.current = null
             }
             settle()
           },
           onCancelled: () => {
             if (isCurrent()) {
+              const committed =
+                committedRef.current?.messageId === asstId
+                  ? committedRef.current.content
+                  : ''
               setRunning(false)
               setStopping(false)
               setMessages((current) =>
-                current.filter(
+                current
+                  .map((item) =>
+                    item.id === asstId ? { ...item, content: committed } : item,
+                  )
+                  .filter(
                   (item) =>
                     !(item.id === asstId && item.content === '' && !(item.steps?.length)),
                 ),
               )
+              committedRef.current = null
             }
             settle()
           },
@@ -277,6 +335,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                   id: message.id || uid(),
                   role: message.role,
                   content: message.content,
+                  thinkingSummary: message.thinking_summary || undefined,
+                  thinking: message.thinking || undefined,
                 })),
               )
               const status = durable.analysis_run
@@ -287,10 +347,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               )
               setRunning(false)
               setStopping(false)
+              committedRef.current = null
             } catch (cause) {
               if (isCurrent()) {
                 setRunning(false)
                 setStopping(false)
+                committedRef.current = null
                 setError(
                   (cause as Error)?.message ??
                     'The analysis could not be restored after the server restarted.',
@@ -324,6 +386,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const prior = messages
       const userMsg: Msg = { id: uid(), role: 'user', content: q }
       const asstId = uid()
+      committedRef.current = { messageId: asstId, content: '' }
       setMessages([...prior, userMsg, { id: asstId, role: 'assistant', content: '', steps: [] }])
       setRunning(true)
       setStopping(false)
@@ -377,6 +440,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                 id: message.id,
                 role: message.role,
                 content: message.content,
+                thinking_summary: message.thinkingSummary,
+                thinking: message.thinking,
               })),
             },
           },
@@ -406,6 +471,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                 id: message.id || uid(),
                 role: message.role,
                 content: message.content,
+                thinkingSummary: message.thinking_summary || undefined,
+                thinking: message.thinking || undefined,
               })),
             )
             setRunning(false)
@@ -413,6 +480,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             setError(started.status === 'failed' ? started.error || 'Analysis failed.' : null)
             runIdRef.current = null
             assistantIdRef.current = null
+            committedRef.current = null
             if (abortRef.current === controller) abortRef.current = null
           }
         } catch (cause) {
@@ -422,6 +490,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             setError((cause as Error)?.message ?? 'The finished analysis could not be restored.')
             runIdRef.current = null
             assistantIdRef.current = null
+            committedRef.current = null
             if (abortRef.current === controller) abortRef.current = null
           }
         }
@@ -472,6 +541,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     abortRef.current = null
     runIdRef.current = null
     assistantIdRef.current = null
+    committedRef.current = null
     setRunning(false)
     setStopping(false)
     setChatId(null)
@@ -491,6 +561,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       abortRef.current = null
       runIdRef.current = null
       assistantIdRef.current = null
+      committedRef.current = null
       setRunning(false)
       setStopping(false)
       setError(null)
@@ -504,6 +575,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           id: message.id || uid(),
           role: message.role,
           content: message.content,
+          thinkingSummary: message.thinking_summary || undefined,
+          thinking: message.thinking || undefined,
         }))
         const run = chat.analysis_run
         const active =
@@ -536,6 +609,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           abortRef.current = controller
           runIdRef.current = run.id
           assistantIdRef.current = run.assistant_message_id
+          committedRef.current = { messageId: run.assistant_message_id, content: '' }
           setRunning(true)
           setStopping(run.status === 'cancelling')
           void followRun(chat.id, run.id, run.assistant_message_id, controller)
