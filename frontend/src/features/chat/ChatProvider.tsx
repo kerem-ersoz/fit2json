@@ -128,6 +128,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const committedRef = useRef<{ messageId: string; content: string } | null>(null)
   const chatVersionRef = useRef<string | null>(null)
   const syncingVersionRef = useRef<string | null>(null)
+  // A requested switch must outrank summary polling for the chat being left.
+  const pendingChatLoadGenerationRef = useRef<number | null>(null)
   // Tracks the currently-active chat so a background save that resolves after the user
   // switched chats doesn't write its result onto the wrong conversation.
   const chatIdRef = useRef<string | null>(null)
@@ -379,6 +381,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const q = text.trim()
       if (!q || running) return
       loadGenerationRef.current += 1
+      pendingChatLoadGenerationRef.current = null
 
       const id = chatId ?? newChatId()
       if (!chatId) {
@@ -543,6 +546,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const newChat = useCallback(() => {
     // Starting another conversation only detaches; any active analysis keeps running.
     loadGenerationRef.current += 1
+    pendingChatLoadGenerationRef.current = null
     abortRef.current?.abort()
     abortRef.current = null
     runIdRef.current = null
@@ -565,6 +569,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const loadChat = useCallback(
     async (id: string, openPanel: boolean, forgetOnFailure = true) => {
       const generation = ++loadGenerationRef.current
+      pendingChatLoadGenerationRef.current = generation
       abortRef.current?.abort()
       abortRef.current = null
       runIdRef.current = null
@@ -632,6 +637,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           // A user-selected chat that is gone should not keep restoring on startup.
           rememberActive(null)
         }
+      } finally {
+        if (pendingChatLoadGenerationRef.current === generation) {
+          pendingChatLoadGenerationRef.current = null
+        }
       }
     },
     [followRun],
@@ -648,6 +657,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     if (
       version === chatVersionRef.current ||
       version === syncingVersionRef.current ||
+      pendingChatLoadGenerationRef.current !== null ||
       running ||
       runIdRef.current
     ) {
