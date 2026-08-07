@@ -49,7 +49,9 @@ CHART_INSTRUCTIONS = (
     "`fitsift-chart`, containing a single valid Vega-Lite v5 JSON spec with the data inlined "
     "under `data.values`. Keep each spec small (aggregate or downsample to <=120 rows) and do "
     "NOT set `width` or `height`. Every chart must be grounded in this workout's actual "
-    "numbers. Example:\n"
+    "numbers. For line charts, set the quantitative y encoding's `scale.zero` to `false` "
+    "unless a zero baseline is analytically meaningful. Keep zero baselines for bar and area "
+    "charts. Example:\n"
     "```fitsift-chart\n"
     '{"mark":"bar","data":{"values":[{"zone":"Z2","minutes":22},{"zone":"Z3","minutes":15}]},'
     '"encoding":{"x":{"field":"zone","type":"nominal"},"y":{"field":"minutes","type":"quantitative"}}}\n'
