@@ -67,6 +67,7 @@ interface ChatSummaryLite {
   updated_at: string
   message_count: number
   activity_ids: string[]
+  analysis_status?: string | null
 }
 
 /** Bucket chats by recency so a long history stays scannable. Input is newest-first. */
@@ -389,7 +390,11 @@ function ChatView({
             </button>
           )}
           {isWorkspace && (
-            <p className="mt-0.5 hidden text-xs text-muted sm:block">Private · saved automatically</p>
+            <p className="mt-0.5 hidden text-xs text-muted sm:block">
+              {chat.running
+                ? 'Analysis continues if you leave this screen'
+                : 'Private · saved automatically'}
+            </p>
           )}
         </div>
         {isWorkspace && onOpenContext && (
@@ -606,9 +611,13 @@ function ChatView({
               <div className="flex items-center justify-between gap-3 border-t border-divider-soft px-1 pt-2">
                 <span className="text-xs text-muted">Enter to send · Shift+Enter for a new line</span>
                 {chat.running ? (
-                  <Button variant="secondary" onClick={() => chat.stop()}>
+                  <Button
+                    variant="secondary"
+                    onClick={() => chat.stop()}
+                    disabled={chat.stopping}
+                  >
                     <Square className="h-4 w-4" />
-                    Stop
+                    {chat.stopping ? 'Stopping…' : 'Stop'}
                   </Button>
                 ) : (
                   <Button onClick={() => submit(input)} disabled={!input.trim()}>
@@ -618,6 +627,12 @@ function ChatView({
                 )}
               </div>
             </div>
+            {chat.running && (
+              <p className="mt-2 flex items-center gap-1.5 text-xs text-muted">
+                <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
+                {chat.stopping ? 'Stopping analysis…' : 'Running in the background…'}
+              </p>
+            )}
           </div>
         </div>
       ) : (
@@ -643,7 +658,12 @@ function ChatView({
               className="max-h-32 min-h-[44px] flex-1 resize-none rounded-lg border border-divider p-2.5 text-base placeholder:text-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent sm:resize-y sm:text-sm"
             />
             {chat.running ? (
-              <Button variant="secondary" onClick={() => chat.stop()} aria-label="Stop">
+              <Button
+                variant="secondary"
+                onClick={() => chat.stop()}
+                disabled={chat.stopping}
+                aria-label={chat.stopping ? 'Stopping' : 'Stop'}
+              >
                 <Square className="h-4 w-4" />
               </Button>
             ) : (
@@ -652,6 +672,12 @@ function ChatView({
               </Button>
             )}
           </div>
+          {chat.running && (
+            <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted">
+              <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
+              {chat.stopping ? 'Stopping analysis…' : 'Running in the background…'}
+            </p>
+          )}
         </div>
       )}
 
@@ -736,7 +762,7 @@ const ChatTranscript = memo(function ChatTranscript({
             </p>
             <p className={clsx('text-sm text-muted', isWorkspace ? 'max-w-md' : 'max-w-xs')}>
               {attachedCount > 0
-                ? 'Ask in your own words. The answer streams here and the conversation stays available for later.'
+                ? 'Ask in your own words. The analysis keeps running if you leave, and the conversation stays available for later.'
                 : isWorkspace
                   ? 'Ask across your full training history, or attach specific workouts from the context panel for a focused comparison.'
                   : 'Describe the workouts in your question, or attach specific sessions from Analyze.'}
@@ -913,6 +939,12 @@ function ChatRow({
                 Current
               </span>
             )}
+            {(c.analysis_status === 'running' || c.analysis_status === 'cancelling') && (
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-slate-100 px-1.5 py-px text-xs font-medium text-slate-600">
+                <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" />
+                Running
+              </span>
+            )}
           </div>
           <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted">
             <span>{relativeTime(c.updated_at)}</span>
@@ -1003,7 +1035,7 @@ function StepList({ steps, running }: { steps: MapStep[]; running: boolean }) {
           {s.state === 'done' ? (
             <Check className="h-3.5 w-3.5 shrink-0 text-accent" />
           ) : (
-            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-faint" />
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-faint motion-reduce:animate-none" />
           )}
           <span className="truncate text-copy">
             {s.state === 'done' ? (s.reused ? 'Reused' : 'Analyzed') : 'Analyzing'} {s.label}
@@ -1012,7 +1044,7 @@ function StepList({ steps, running }: { steps: MapStep[]; running: boolean }) {
       ))}
       {allDone && running && (
         <div className="flex items-center gap-2 text-xs">
-          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-faint" />
+          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-faint motion-reduce:animate-none" />
           <span className="text-copy">Synthesizing across {steps.length} workouts…</span>
         </div>
       )}
@@ -1047,6 +1079,8 @@ const MessageBubble = memo(function MessageBubble({
       />
       {msg.content ? (
         <MarkdownView>{msg.content}</MarkdownView>
+      ) : !msg.steps?.length && running ? (
+        <p className="text-sm text-muted">Analysis is running in the background…</p>
       ) : null}
     </div>
   )

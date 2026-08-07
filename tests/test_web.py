@@ -1,6 +1,8 @@
 """Tests for the FitSift web API (read-only library endpoints + meta)."""
 
 import importlib
+import threading
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,6 +11,18 @@ from fit2json.output import write_per_activity
 from fit2json.parser import decode_fit_file
 
 FIXTURE = "tests/fixtures/sample-activity.fit"
+
+
+def _wait_for_run(client, run_id, terminal=("completed", "failed", "cancelled")):
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        response = client.get(f"/api/analysis-runs/{run_id}")
+        assert response.status_code == 200
+        info = response.json()
+        if info["status"] in terminal:
+            return info
+        time.sleep(0.01)
+    raise AssertionError(f"analysis run {run_id} did not finish")
 
 
 @pytest.fixture()
@@ -303,6 +317,263 @@ def test_analyze_requires_prompt(client):
     assert client.post("/api/analyze", json={"prompt": "   "}).status_code == 422
 
 
+def test_analysis_run_continues_without_subscriber_and_replays(client, monkeypatch):
+    from fit2json import analyzer
+
+    started = threading.Event()
+    release = threading.Event()
+    calls = 0
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+
+    def fake_stream(prompt, workout_paths, event_handler=None, **kwargs):
+        nonlocal calls
+        calls += 1
+        started.set()
+        assert release.wait(timeout=2)
+        assert event_handler is not None
+        event_handler({"type": "assistant.intent", "data": {"intent": "Reviewing workout evidence"}})
+        yield ""
+        event_handler(
+            {
+                "type": "assistant.reasoning",
+                "data": {"reasoningId": "r1", "content": "Pace and heart rate stayed controlled."},
+            }
+        )
+        yield ""
+        event_handler(
+            {
+                "type": "assistant.message_delta",
+                "data": {"messageId": "m1", "deltaContent": "I will inspect the file."},
+            }
+        )
+        yield ""
+        event_handler(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m1",
+                    "content": "I will inspect the file.",
+                    "toolRequests": [{"toolCallId": "t1", "name": "view"}],
+                },
+            }
+        )
+        yield ""
+        event_handler(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m2",
+                    "content": "Background answer",
+                    "toolRequests": [],
+                },
+            }
+        )
+        yield "Background answer"
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+    body = {
+        "run_id": "run-background",
+        "analysis": {"prompt": "How am I doing?", "no_memory": True},
+        "chat_id": "chat-background",
+        "assistant_message_id": "assistant-1",
+        "chat": {
+            "backend": "copilot",
+            "activity_ids": [],
+            "messages": [{"id": "user-1", "role": "user", "content": "How am I doing?"}],
+        },
+    }
+
+    first = client.post("/api/analysis-runs", json=body)
+    assert first.status_code == 202
+    assert started.wait(timeout=1)
+
+    # Retrying an uncertain POST is idempotent and does not spend another model call.
+    second = client.post("/api/analysis-runs", json=body)
+    assert second.status_code == 202
+    assert second.json()["id"] == "run-background"
+    assert calls == 1
+
+    conflicting = {
+        **body,
+        "run_id": "run-conflicting",
+        "assistant_message_id": "assistant-2",
+    }
+    conflict_response = client.post("/api/analysis-runs", json=conflicting)
+    assert conflict_response.status_code == 409
+    assert calls == 1
+
+    # No event subscriber is connected while inference finishes.
+    running_chat = client.get("/api/chats/chat-background").json()
+    assert running_chat["analysis_run"]["status"] == "running"
+    assert len(running_chat["messages"]) == 1
+    release.set()
+
+    info = _wait_for_run(client, "run-background")
+    assert info["status"] == "completed"
+    finished_chat = client.get("/api/chats/chat-background").json()
+    assert finished_chat["analysis_run"]["status"] == "completed"
+    assert [message["content"] for message in finished_chat["messages"]] == [
+        "How am I doing?",
+        "Background answer",
+    ]
+    assert finished_chat["messages"][1]["thinking_summary"] == "Reviewing workout evidence"
+    assert finished_chat["messages"][1]["thinking"] == "Pace and heart rate stayed controlled."
+
+    replay = client.get("/api/analysis-runs/run-background/events")
+    assert replay.status_code == 200
+    assert "id: 1" in replay.text
+    assert "Background answer" in replay.text
+    assert "event: thinking" in replay.text
+    assert "event: replace" in replay.text
+    assert "I will inspect the file." in replay.text
+    assert "event: done" in replay.text
+
+    terminal_only = client.get(
+        "/api/analysis-runs/run-background/events",
+        params={"after": info["last_event_id"] - 1},
+    )
+    assert "Background answer" not in terminal_only.text
+    assert "event: done" in terminal_only.text
+
+    # A retry after a process-local registry loss resolves from the durable run marker.
+    from fit2json.web import analysis_runs
+    from fit2json.web.config import get_settings
+
+    registry_key = str(get_settings().chats_dir.expanduser().resolve())
+    with analysis_runs._registries_lock:
+        analysis_runs._registries.pop(registry_key)
+    after_restart = client.post("/api/analysis-runs", json=body)
+    assert after_restart.status_code == 202
+    assert after_restart.json()["status"] == "completed"
+    assert calls == 1
+
+
+def test_failed_background_analysis_is_explicit_in_chat(client, monkeypatch):
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+
+    def failed_stream(*args, **kwargs):
+        raise RuntimeError("model process exited")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(analyzer, "stream_copilot", failed_stream)
+    response = client.post(
+        "/api/analysis-runs",
+        json={
+            "run_id": "run-failed",
+            "analysis": {"prompt": "Review this", "no_memory": True},
+            "chat_id": "chat-failed",
+            "assistant_message_id": "assistant-1",
+            "chat": {
+                "activity_ids": [],
+                "messages": [{"id": "user-1", "role": "user", "content": "Review this"}],
+            },
+        },
+    )
+    assert response.status_code == 202
+
+    info = _wait_for_run(client, "run-failed")
+    assert info["status"] == "failed"
+    assert info["error"] == "model process exited"
+    chat = client.get("/api/chats/chat-failed").json()
+    assert chat["analysis_run"]["status"] == "failed"
+    assert chat["analysis_run"]["error"] == "model process exited"
+    assert [message["role"] for message in chat["messages"]] == ["user"]
+
+
+def test_cancel_before_start_prevents_model_call(client, monkeypatch):
+    from fit2json import analyzer
+
+    calls = 0
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+
+    def fake_stream(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        yield "should not run"
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+    cancelled = client.post("/api/analysis-runs/run-cancelled-before-start/cancel")
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+
+    start = client.post(
+        "/api/analysis-runs",
+        json={
+            "run_id": "run-cancelled-before-start",
+            "analysis": {"prompt": "Do not run"},
+        },
+    )
+    assert start.status_code == 202
+    assert start.json()["status"] == "cancelled"
+    assert calls == 0
+
+
+def test_chat_cancel_before_start_persists_cancelled_turn(client, monkeypatch):
+    from fit2json import analyzer
+
+    calls = 0
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+
+    def fake_stream(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        yield "should not run"
+
+    monkeypatch.setattr(analyzer, "stream_copilot", fake_stream)
+    run_id = "run-chat-cancelled-before-start"
+    assert client.post(f"/api/analysis-runs/{run_id}/cancel").status_code == 200
+
+    body = {
+        "run_id": run_id,
+        "analysis": {"prompt": "Do not run"},
+        "chat_id": "cancelled-chat",
+        "assistant_message_id": "assistant-1",
+        "chat": {
+            "activity_ids": [],
+            "messages": [{"id": "user-1", "role": "user", "content": "Do not run"}],
+        },
+    }
+    first = client.post("/api/analysis-runs", json=body)
+    second = client.post("/api/analysis-runs", json=body)
+    assert first.status_code == 202
+    assert second.status_code == 202
+    assert first.json()["status"] == "cancelled"
+    assert calls == 0
+    chat = client.get("/api/chats/cancelled-chat").json()
+    assert chat["analysis_run"]["status"] == "cancelled"
+    assert [message["content"] for message in chat["messages"]] == ["Do not run"]
+
+
+def test_empty_background_analysis_records_failure(client, monkeypatch):
+    from fit2json import analyzer
+
+    monkeypatch.setattr(analyzer, "resolve_backend", lambda backend, base_url: "copilot")
+    monkeypatch.setattr(analyzer, "stream_copilot", lambda *args, **kwargs: iter(()))
+    response = client.post(
+        "/api/analysis-runs",
+        json={
+            "run_id": "run-empty",
+            "analysis": {"prompt": "Answer me", "no_memory": True},
+            "chat_id": "chat-empty",
+            "assistant_message_id": "assistant-1",
+            "chat": {
+                "activity_ids": [],
+                "messages": [{"id": "user-1", "role": "user", "content": "Answer me"}],
+            },
+        },
+    )
+    assert response.status_code == 202
+
+    info = _wait_for_run(client, "run-empty")
+    assert info["status"] == "failed"
+    assert info["error"] == "The model returned no response. Please try again."
+    chat = client.get("/api/chats/chat-empty").json()
+    assert chat["analysis_run"]["status"] == "failed"
+    assert chat["analysis_run"]["error"] == info["error"]
+
+
 def test_chats_empty_then_upsert_and_resume(client):
     # A fresh corpus has no saved chats.
     assert client.get("/api/chats").json() == {"chats": []}
@@ -367,6 +638,10 @@ def test_chats_update_preserves_created_at_and_delete(client):
     assert second["created_at"] == first["created_at"]
     assert second["title"] == "My renamed chat"
     assert len(second["messages"]) == 2
+
+    renamed = client.patch("/api/chats/c1", json={"title": "Only the title changed"}).json()
+    assert renamed["title"] == "Only the title changed"
+    assert len(renamed["messages"]) == 2
 
     assert client.delete("/api/chats/c1").status_code == 200
     assert client.get("/api/chats/c1").status_code == 404

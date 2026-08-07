@@ -1,7 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Sparkles, Square } from 'lucide-react'
-import { api, streamAnalyze, type ThinkingInfo } from '../../lib/api'
+import { Loader2, Sparkles, Square } from 'lucide-react'
+import {
+  api,
+  cancelAnalysisRun,
+  newAnalysisRunId,
+  startAnalysisRun,
+  streamAnalysisRun,
+  type AnalysisRunInfo,
+  type ThinkingInfo,
+} from '../../lib/api'
 import { Button } from '../../components/ui/Button'
 import { Card, CardBody } from '../../components/ui/Card'
 import { MarkdownView } from '../../components/ui/Markdown'
@@ -15,6 +23,8 @@ const SUGGESTIONS = [
   'Chart my time in each heart-rate zone.',
   'Any signs of fatigue or overreaching here?',
 ]
+
+const runStorageKey = (activityId: string) => `fitsift-analysis-run:${activityId}`
 
 function backendOptions(copilot: boolean) {
   const opts = [
@@ -46,10 +56,12 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
   const [backend, setBackend] = useState<string>('')
   const [effort, setEffort] = useState<string>('')
   const [running, setRunning] = useState(false)
+  const [stopping, setStopping] = useState(false)
   const [output, setOutput] = useState('')
   const [thinking, setThinking] = useState<ThinkingInfo>({ summary: '', text: '' })
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const runIdRef = useRef<string | null>(null)
   const committedOutputRef = useRef('')
   const streamBackendRef = useRef('')
   const sectionRef = useRef<HTMLElement>(null)
@@ -61,7 +73,121 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
     if (!backend && config?.backends.default) setBackend(config.backends.default)
   }, [config, backend])
 
-  useEffect(() => () => abortRef.current?.abort(), [])
+  const clearStoredRun = useCallback(
+    (runId: string) => {
+      try {
+        if (localStorage.getItem(runStorageKey(activityId)) === runId) {
+          localStorage.removeItem(runStorageKey(activityId))
+        }
+      } catch {
+        /* local storage is an enhancement; the saved analysis remains server-side */
+      }
+    },
+    [activityId],
+  )
+
+  const followRun = useCallback(
+    async (runId: string, controller: AbortController) => {
+      const isCurrent = () => runIdRef.current === runId
+      await streamAnalysisRun(
+        runId,
+        {
+          onStart: (value) => {
+            streamBackendRef.current = value
+          },
+          onThinking: setThinking,
+          onDelta: (text) => {
+            if (!isCurrent()) return
+            setOutput((current) => {
+              const next = current + text
+              if (streamBackendRef.current !== 'copilot') committedOutputRef.current = next
+              return next
+            })
+          },
+          onReplace: (text) => {
+            if (!isCurrent()) return
+            committedOutputRef.current = text
+            setOutput(text)
+          },
+          onDone: (info) => {
+            clearStoredRun(runId)
+            if (info.saved) {
+              queryClient.invalidateQueries({ queryKey: ['analyses', activityId] })
+            }
+            if (!isCurrent()) return
+            setRunning(false)
+            setStopping(false)
+            setError(null)
+            if (info.saved) setOutput('')
+            committedOutputRef.current = ''
+            runIdRef.current = null
+          },
+          onError: (message) => {
+            clearStoredRun(runId)
+            queryClient.invalidateQueries({ queryKey: ['analyses', activityId] })
+            if (!isCurrent()) return
+            setRunning(false)
+            setStopping(false)
+            setOutput(committedOutputRef.current)
+            setError(message)
+            runIdRef.current = null
+          },
+          onCancelled: () => {
+            clearStoredRun(runId)
+            if (!isCurrent()) return
+            setRunning(false)
+            setStopping(false)
+            setOutput(committedOutputRef.current)
+            runIdRef.current = null
+          },
+          onMissing: async () => {
+            clearStoredRun(runId)
+            await queryClient.invalidateQueries({ queryKey: ['analyses', activityId] })
+            if (!isCurrent()) return
+            setRunning(false)
+            setStopping(false)
+            setError(
+              'The analysis was interrupted because the FitSift server restarted.',
+            )
+            runIdRef.current = null
+          },
+        },
+        controller.signal,
+      )
+      if (abortRef.current === controller) abortRef.current = null
+    },
+    [activityId, clearStoredRun, queryClient],
+  )
+
+  useEffect(
+    () => () => {
+      abortRef.current?.abort()
+      abortRef.current = null
+      runIdRef.current = null
+    },
+    [activityId],
+  )
+
+  // Restore a detached run after navigation, reload, or mobile app suspension.
+  useEffect(() => {
+    let runId: string | null = null
+    try {
+      runId = localStorage.getItem(runStorageKey(activityId))
+    } catch {
+      runId = null
+    }
+    if (!runId) return
+
+    const controller = new AbortController()
+    abortRef.current = controller
+    runIdRef.current = runId
+    setRunning(true)
+    setStopping(false)
+    setError(null)
+    setOutput('')
+    void followRun(runId, controller)
+    return () => controller.abort()
+  }, [activityId, followRun])
 
   // Deep-link from the Analyze page: scroll to the panel and focus the prompt.
   useEffect(() => {
@@ -82,49 +208,69 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
     streamBackendRef.current = backend
     const controller = new AbortController()
     abortRef.current = controller
-    await streamAnalyze(
-      {
-        activity_id: activityId,
-        prompt,
-        backend: backend || undefined,
-        reasoning_effort: backend === 'copilot' && effort ? effort : undefined,
-      },
-      {
-        onStart: (value) => {
-          streamBackendRef.current = value
+    const runId = newAnalysisRunId()
+    runIdRef.current = runId
+    try {
+      localStorage.setItem(runStorageKey(activityId), runId)
+    } catch {
+      /* the run still survives while this page remains mounted */
+    }
+    let started: AnalysisRunInfo
+    try {
+      started = await startAnalysisRun(
+        {
+          run_id: runId,
+          analysis: {
+            activity_id: activityId,
+            prompt,
+            backend: backend || undefined,
+            reasoning_effort: backend === 'copilot' && effort ? effort : undefined,
+          },
         },
-        onThinking: setThinking,
-        onDelta: (text) =>
-          setOutput((output) => {
-            const next = output + text
-            if (streamBackendRef.current !== 'copilot') committedOutputRef.current = next
-            return next
-          }),
-        onReplace: (text) => {
-          committedOutputRef.current = text
-          setOutput(text)
-        },
-        onDone: (info) => {
-          setRunning(false)
-          if (info.saved) {
-            setOutput('')
-            queryClient.invalidateQueries({ queryKey: ['analyses', activityId] })
-          }
-        },
-        onError: (msg) => {
-          setRunning(false)
-          setOutput(committedOutputRef.current)
-          setError(msg)
-        },
-      },
-      controller.signal,
-    )
+        controller.signal,
+      )
+    } catch (cause) {
+      if (controller.signal.aborted) return
+      setRunning(false)
+      setStopping(false)
+      setError((cause as Error)?.message ?? 'Analysis could not be started.')
+      clearStoredRun(runId)
+      runIdRef.current = null
+      if (abortRef.current === controller) abortRef.current = null
+      return
+    }
+    if (
+      started.status === 'completed' ||
+      started.status === 'failed' ||
+      started.status === 'cancelled'
+    ) {
+      clearStoredRun(runId)
+      if (runIdRef.current === runId) {
+        setRunning(false)
+        setStopping(false)
+        setError(
+          started.status === 'failed' ? started.error || 'Analysis failed.' : null,
+        )
+        runIdRef.current = null
+      }
+      if (started.status === 'completed') {
+        await queryClient.invalidateQueries({ queryKey: ['analyses', activityId] })
+      }
+      return
+    }
+    await followRun(runId, controller)
   }
 
   const stop = () => {
-    abortRef.current?.abort()
-    setOutput(committedOutputRef.current)
-    setRunning(false)
+    const runId = runIdRef.current
+    if (!runId || stopping) return
+    setStopping(true)
+    void cancelAnalysisRun(runId).catch((cause) => {
+      if (runIdRef.current === runId) {
+        setStopping(false)
+        setError((cause as Error)?.message ?? 'The analysis could not be stopped.')
+      }
+    })
   }
 
   const options = backendOptions(config?.backends.copilot ?? false)
@@ -206,13 +352,19 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
 
           <div className="flex items-center gap-3">
             {running ? (
-              <Button variant="secondary" onClick={stop}>
-                <Square className="h-4 w-4" /> Stop
+              <Button variant="secondary" onClick={stop} disabled={stopping}>
+                <Square className="h-4 w-4" /> {stopping ? 'Stopping…' : 'Stop'}
               </Button>
             ) : (
               <Button onClick={run} disabled={!prompt.trim()}>
                 <Sparkles className="h-4 w-4" /> Analyze
               </Button>
+            )}
+            {running && (
+              <span className="flex items-center gap-1.5 text-sm text-muted">
+                <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+                {stopping ? 'Stopping analysis…' : 'Running in the background…'}
+              </span>
             )}
           </div>
 
@@ -228,9 +380,15 @@ export function AnalysisPanel({ activityId }: { activityId: string }) {
             </div>
           )}
 
-          {output && (
+          {(output || running) && (
             <div className="rounded-lg border border-divider bg-surface-muted p-3">
-              <MarkdownView>{output}</MarkdownView>
+              {output ? (
+                <MarkdownView>{output}</MarkdownView>
+              ) : (
+                <p className="text-sm text-muted">
+                  You can leave this screen while the model works.
+                </p>
+              )}
             </div>
           )}
         </CardBody>

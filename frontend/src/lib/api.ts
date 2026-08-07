@@ -159,6 +159,16 @@ export interface ChatSummary {
   backend: string
   model: string
   activity_ids: string[]
+  analysis_status?: string | null
+}
+
+export interface AnalysisRunState {
+  id: string
+  assistant_message_id?: string | null
+  status: string
+  error?: string | null
+  started_at: string
+  finished_at?: string | null
 }
 
 export interface Chat {
@@ -171,6 +181,7 @@ export interface Chat {
   reasoning_effort: string
   activity_ids: string[]
   messages: ChatMessage[]
+  analysis_run?: AnalysisRunState | null
 }
 
 export interface ChatSaveBody {
@@ -250,6 +261,16 @@ export const api = {
     return (await res.json()) as Chat
   },
 
+  renameChat: async (id: string, title: string): Promise<Chat> => {
+    const res = await fetch(`${API_BASE}/chats/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    })
+    if (!res.ok) throw new Error(await errorText(res))
+    return (await res.json()) as Chat
+  },
+
   deleteChat: async (id: string): Promise<void> => {
     const res = await fetch(`${API_BASE}/chats/${encodeURIComponent(id)}`, { method: 'DELETE' })
     if (!res.ok) throw new Error(await errorText(res))
@@ -277,6 +298,23 @@ export interface AnalyzeBody {
   no_memory?: boolean
 }
 
+export interface AnalysisRunStartBody {
+  run_id: string
+  analysis: AnalyzeBody
+  chat_id?: string
+  assistant_message_id?: string
+  chat?: ChatSaveBody
+}
+
+export interface AnalysisRunInfo {
+  id: string
+  status: string
+  error?: string | null
+  last_event_id: number
+  created_at: string
+  finished_at?: string | null
+}
+
 export interface MapStep {
   index: number
   total: number
@@ -299,24 +337,32 @@ export interface StreamHandlers {
   onReplace?: (text: string) => void
   onDone?: (info: { chars: number; saved: string | null; backend: string }) => void
   onError?: (message: string) => void
+  onCancelled?: () => void
+  onMissing?: () => void | Promise<void>
 }
 
 interface SseFrame {
   event: string
+  id?: number
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any
 }
 
 function parseFrame(frame: string): SseFrame | null {
   let event = 'message'
+  let id: number | undefined
   const dataLines: string[] = []
   for (const line of frame.split('\n')) {
     if (line.startsWith('event:')) event = line.slice(6).trim()
+    else if (line.startsWith('id:')) {
+      const parsed = Number(line.slice(3).trim())
+      if (Number.isInteger(parsed) && parsed >= 0) id = parsed
+    }
     else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
   }
   if (dataLines.length === 0) return null
   try {
-    return { event, data: JSON.parse(dataLines.join('\n')) }
+    return { event, id, data: JSON.parse(dataLines.join('\n')) }
   } catch {
     return null
   }
@@ -385,6 +431,31 @@ function isAbortError(error: unknown, signal?: AbortSignal): boolean {
   return signal?.aborted === true || (error as Error)?.name === 'AbortError'
 }
 
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'))
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      window.clearTimeout(timer)
+      reject(new DOMException('Aborted', 'AbortError'))
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+async function waitToReconnect(signal?: AbortSignal): Promise<boolean> {
+  try {
+    await abortableDelay(750, signal)
+    return true
+  } catch (error) {
+    if (isAbortError(error, signal)) return false
+    throw error
+  }
+}
+
 async function consumeSse(
   path: string,
   body: unknown,
@@ -414,6 +485,22 @@ async function consumeSse(
   if (!terminal && !signal?.aborted) onError(INTERRUPTED_STREAM_MESSAGE)
 }
 
+function dispatchAnalyzeFrame(parsed: SseFrame, handlers: StreamHandlers): void {
+  if (parsed.event === 'start') handlers.onStart?.(parsed.data.backend)
+  else if (parsed.event === 'step') handlers.onStep?.(parsed.data)
+  else if (parsed.event === 'reduce') handlers.onReduce?.(parsed.data)
+  else if (parsed.event === 'thinking')
+    handlers.onThinking?.({
+      summary: parsed.data.summary ?? '',
+      text: parsed.data.text ?? '',
+    })
+  else if (parsed.event === 'delta') handlers.onDelta(parsed.data.text ?? '')
+  else if (parsed.event === 'replace') handlers.onReplace?.(parsed.data.text ?? '')
+  else if (parsed.event === 'done') handlers.onDone?.(parsed.data)
+  else if (parsed.event === 'error') handlers.onError?.(parsed.data.message ?? 'Analysis failed')
+  else if (parsed.event === 'cancelled') handlers.onCancelled?.()
+}
+
 /** POST /analyze and stream the Server-Sent Events back through the handlers. */
 export async function streamAnalyze(
   body: AnalyzeBody,
@@ -424,22 +511,125 @@ export async function streamAnalyze(
     '/analyze',
     body,
     signal,
-    (parsed) => {
-      if (parsed.event === 'start') handlers.onStart?.(parsed.data.backend)
-      else if (parsed.event === 'step') handlers.onStep?.(parsed.data)
-      else if (parsed.event === 'reduce') handlers.onReduce?.(parsed.data)
-      else if (parsed.event === 'thinking')
-        handlers.onThinking?.({
-          summary: parsed.data.summary ?? '',
-          text: parsed.data.text ?? '',
-        })
-      else if (parsed.event === 'delta') handlers.onDelta(parsed.data.text ?? '')
-      else if (parsed.event === 'replace') handlers.onReplace?.(parsed.data.text ?? '')
-      else if (parsed.event === 'done') handlers.onDone?.(parsed.data)
-      else if (parsed.event === 'error') handlers.onError?.(parsed.data.message ?? 'Analysis failed')
-    },
+    (parsed) => dispatchAnalyzeFrame(parsed, handlers),
     (message) => handlers.onError?.(message),
   )
+}
+
+/** A client-generated id makes POST retries safe when the initial response is lost. */
+export function newAnalysisRunId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
+  return `run-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+/** Start a server-owned run. Network failures retry with the same id to avoid duplicates. */
+export async function startAnalysisRun(
+  body: AnalysisRunStartBody,
+  signal?: AbortSignal,
+): Promise<AnalysisRunInfo> {
+  while (true) {
+    try {
+      const res = await fetch(`${API_BASE}/analysis-runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal,
+      })
+      if (!res.ok) throw new Error(await errorText(res))
+      return (await res.json()) as AnalysisRunInfo
+    } catch (error) {
+      if (isAbortError(error, signal)) throw error
+      if (error instanceof TypeError) {
+        await abortableDelay(750, signal)
+        continue
+      }
+      throw error
+    }
+  }
+}
+
+/**
+ * Follow a run through numbered SSE events. A dropped connection resumes after the last
+ * delivered event; aborting only detaches this subscriber and leaves the worker running.
+ */
+export async function streamAnalysisRun(
+  runId: string,
+  handlers: StreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  let after = 0
+  while (!signal?.aborted) {
+    let res: Response
+    try {
+      res = await fetch(
+        `${API_BASE}/analysis-runs/${encodeURIComponent(runId)}/events?after=${after}`,
+        { signal },
+      )
+    } catch (error) {
+      if (isAbortError(error, signal)) return
+      if (!(await waitToReconnect(signal))) return
+      continue
+    }
+
+    if (res.status === 404) {
+      if (handlers.onMissing) await handlers.onMissing()
+      else {
+        handlers.onError?.(
+          'This analysis can no longer be resumed. The FitSift server may have restarted.',
+        )
+      }
+      return
+    }
+    if (!res.ok || !res.body) {
+      handlers.onError?.(await errorText(res))
+      return
+    }
+
+    let terminal = false
+    try {
+      await pumpSse(res, (frame) => {
+        if (frame.id != null) {
+          if (frame.id <= after) return
+          after = frame.id
+        }
+        if (frame.event === 'done' || frame.event === 'error' || frame.event === 'cancelled') {
+          terminal = true
+        }
+        dispatchAnalyzeFrame(frame, handlers)
+      })
+    } catch (error) {
+      if (isAbortError(error, signal)) return
+    }
+    if (terminal || signal?.aborted) return
+    if (!(await waitToReconnect(signal))) return
+  }
+}
+
+export function analysisRun(runId: string): Promise<AnalysisRunInfo> {
+  return getJSON<AnalysisRunInfo>(`/analysis-runs/${encodeURIComponent(runId)}`)
+}
+
+export async function cancelAnalysisRun(
+  runId: string,
+  signal?: AbortSignal,
+): Promise<AnalysisRunInfo> {
+  while (true) {
+    try {
+      const res = await fetch(`${API_BASE}/analysis-runs/${encodeURIComponent(runId)}/cancel`, {
+        method: 'POST',
+        signal,
+      })
+      if (!res.ok) throw new Error(await errorText(res))
+      return (await res.json()) as AnalysisRunInfo
+    } catch (error) {
+      if (isAbortError(error, signal)) throw error
+      if (error instanceof TypeError) {
+        await abortableDelay(750, signal)
+        continue
+      }
+      throw error
+    }
+  }
 }
 
 export interface InfographicBody {

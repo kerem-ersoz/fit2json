@@ -11,8 +11,9 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from fit2json.chats import ChatStore
+from fit2json.web.analysis_runs import get_analysis_run_registry
 from fit2json.web.config import get_settings
-from fit2json.web.schemas import Chat, ChatList, ChatSave, ChatSummary
+from fit2json.web.schemas import Chat, ChatList, ChatRename, ChatSave, ChatSummary
 
 router = APIRouter(prefix="/chats", tags=["chats"])
 
@@ -42,8 +43,24 @@ def save_chat(chat_id: str, body: ChatSave) -> Chat:
     return Chat(**doc)
 
 
+@router.patch("/{chat_id}", response_model=Chat)
+def rename_chat(chat_id: str, body: ChatRename) -> Chat:
+    doc = _store().rename(chat_id, body.title)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    return Chat(**doc)
+
+
 @router.delete("/{chat_id}")
 def delete_chat(chat_id: str):
-    if not _store().delete(chat_id):
+    store = _store()
+    doc = store.get(chat_id)
+    if doc is None:
         raise HTTPException(status_code=404, detail="Chat not found")
+    run = doc.get("analysis_run")
+    if isinstance(run, dict) and run.get("status") in ("running", "cancelling"):
+        active = get_analysis_run_registry(get_settings().chats_dir).get(str(run.get("id") or ""))
+        if active is not None:
+            active.cancel()
+    store.delete(chat_id)
     return {"ok": True}

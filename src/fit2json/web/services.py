@@ -527,6 +527,7 @@ def stream_workout_analysis(
             api_key=key,
             memory_digest=None,
             model=model,
+            keepalive_interval=keepalive_interval,
         )
     raise ValueError(f"Unsupported analysis backend: {backend}")
 

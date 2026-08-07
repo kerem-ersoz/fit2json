@@ -265,140 +265,56 @@ test('keeps touch form controls above the iOS focus-zoom threshold', async ({ pa
   expect(fontSizes.every((size) => size >= 16)).toBe(true)
 })
 
-test('expands model thinking from its one-sentence summary', async ({ page }) => {
+test('reconnects to background thinking without starting twice', async ({ page }) => {
+  let runId = ''
+  let startCalls = 0
+  let eventConnections = 0
   const summary = 'Reviewing pace and heart-rate evidence'
   const reasoning =
     'The opening pace was controlled while heart rate rose gradually. The finish stayed aerobic.'
-  const frames = [
-    `event: start\ndata: ${JSON.stringify({ backend: 'copilot' })}\n\n`,
-    `event: thinking\ndata: ${JSON.stringify({ summary, text: reasoning })}\n\n`,
-    `event: delta\ndata: ${JSON.stringify({ text: 'A controlled aerobic session.' })}\n\n`,
-    `event: replace\ndata: ${JSON.stringify({ text: 'A controlled aerobic session.' })}\n\n`,
-    `event: done\ndata: ${JSON.stringify({ chars: 29, saved: null, backend: 'copilot' })}\n\n`,
-  ]
-  await page.route('**/api/analyze', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'text/event-stream',
-      body: frames.join(''),
-    }),
-  )
-  await page.goto('/analyze')
 
-  const savedChat = page.waitForRequest(
-    (request) => {
-      if (request.method() !== 'PUT' || !new URL(request.url()).pathname.includes('/api/chats/')) {
-        return false
-      }
-      const body = request.postDataJSON() as {
-        messages?: { thinking_summary?: string }[]
-      }
-      return body.messages?.[1]?.thinking_summary === summary
-    },
-  )
-  await page.getByRole('textbox', { name: 'Message' }).fill('How did this session go?')
-  await page.getByRole('button', { name: 'Send' }).tap()
-
-  const disclosure = page.locator('details').filter({ hasText: summary })
-  const detail = page.getByText(reasoning)
-  await expect(disclosure).toBeVisible()
-  expect(await disclosure.evaluate((element) => (element as HTMLDetailsElement).open)).toBe(false)
-  await expect(detail).toBeHidden()
-
-  const trigger = disclosure.locator('summary')
-  expect(await trigger.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44)
-  await trigger.tap()
-
-  await expect(detail).toBeVisible()
-  expect(await disclosure.evaluate((element) => (element as HTMLDetailsElement).open)).toBe(true)
-  await expect(page.getByText('A controlled aerobic session.')).toBeVisible()
-
-  const savedBody = (await savedChat).postDataJSON()
-  expect(savedBody.messages[1].thinking_summary).toBe(summary)
-  expect(savedBody.messages[1].thinking).toBe(reasoning)
-})
-
-test('discards provisional Copilot narration when stopped', async ({ page }) => {
-  const narration = 'I will inspect the workout file.'
-  await page.addInitScript(({ narration }) => {
-    const originalFetch = window.fetch.bind(window)
-    window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = input instanceof Request ? input.url : String(input)
-      if (!url.includes('/api/analyze')) return originalFetch(input, init)
-
-      const encoder = new TextEncoder()
-      const body = new ReadableStream({
-        start(controller) {
-          controller.enqueue(
-            encoder.encode(
-              [
-                `event: start\ndata: ${JSON.stringify({ backend: 'copilot' })}\n\n`,
-                `event: delta\ndata: ${JSON.stringify({ text: narration })}\n\n`,
-              ].join(''),
-            ),
-          )
-          init?.signal?.addEventListener('abort', () => {
-            controller.error(new DOMException('Aborted', 'AbortError'))
-          })
-        },
-      })
-      return Promise.resolve(
-        new Response(body, {
-          status: 200,
-          headers: { 'Content-Type': 'text/event-stream' },
-        }),
-      )
-    }) as typeof window.fetch
-  }, { narration })
-  await page.goto('/analyze')
-
-  await page.getByRole('textbox', { name: 'Message' }).fill('Review this workout')
-  await page.getByRole('button', { name: 'Send' }).tap()
-  await expect(page.getByText(narration)).toBeVisible()
-
-  await page.getByRole('button', { name: 'Stop' }).tap()
-  await expect(page.getByText(narration)).toBeHidden()
-})
-
-test('recovers when an analysis stream closes without a terminal event', async ({ page }) => {
-  let savedBeforeAnalysis = false
-
-  await page.route('**/api/chats/*', async (route) => {
+  await page.route('**/api/analysis-runs', async (route) => {
     const body = route.request().postDataJSON() as {
-      title?: string
-      backend?: string
-      model?: string
-      reasoning_effort?: string
-      activity_ids: string[]
-      messages: { id: string; role: string; content: string }[]
+      run_id: string
+      chat: { messages: { role: string; content: string }[] }
     }
-    expect(body.messages).toHaveLength(1)
-    savedBeforeAnalysis = true
-    const id = new URL(route.request().url()).pathname.split('/').pop() ?? 'chat'
+    startCalls += 1
+    runId = body.run_id
+    expect(body.chat.messages).toHaveLength(1)
     await route.fulfill({
       json: {
-        id,
-        title: body.title ?? body.messages[0].content,
+        id: runId,
+        status: 'running',
+        error: null,
+        last_event_id: 0,
         created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        backend: body.backend ?? '',
-        model: body.model ?? '',
-        reasoning_effort: body.reasoning_effort ?? '',
-        activity_ids: body.activity_ids,
-        messages: body.messages,
+        finished_at: null,
       },
     })
   })
-  await page.route('**/api/analyze', async (route) => {
-    expect(savedBeforeAnalysis).toBe(true)
+  await page.route('**/api/analysis-runs/*/events?*', async (route) => {
+    eventConnections += 1
+    const url = new URL(route.request().url())
+    expect(url.pathname).toContain(runId)
+    if (eventConnections === 1) {
+      expect(url.searchParams.get('after')).toBe('0')
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body:
+          'id: 1\nevent: start\ndata: {"backend":"copilot"}\n\n' +
+          `id: 2\nevent: thinking\ndata: ${JSON.stringify({ summary, text: reasoning })}\n\n` +
+          'id: 3\nevent: delta\ndata: {"text":"I will inspect the workout file."}\n\n',
+      })
+      return
+    }
+    expect(url.searchParams.get('after')).toBe('3')
     await route.fulfill({
       status: 200,
       contentType: 'text/event-stream',
-      body: [
-        'event: start\ndata: {"backend":"copilot"}\n\n',
-        'event: delta\ndata: {"text":"I will inspect the workout file."}\n\n',
-        'event: ping\ndata: {}\n\n',
-      ].join(''),
+      body:
+        'id: 4\nevent: replace\ndata: {"text":"A controlled aerobic session."}\n\n' +
+        'id: 5\nevent: done\ndata: {"chars":29,"saved":null,"backend":"copilot"}\n\n',
     })
   })
 
@@ -406,10 +322,79 @@ test('recovers when an analysis stream closes without a terminal event', async (
   await page.getByRole('textbox', { name: 'Message' }).fill('Review my latest run')
   await page.getByRole('button', { name: 'Send' }).click()
 
-  await expect(page.getByRole('alert')).toContainText(
-    'The connection closed before the response finished.',
-  )
-  await expect(page.getByText('Thinking…')).toBeHidden()
+  const disclosure = page.locator('details').filter({ hasText: summary })
+  const detail = page.getByText(reasoning)
+  await expect(disclosure).toBeVisible()
+  await disclosure.locator('summary').tap()
+  await expect(detail).toBeVisible()
+  await expect(page.getByText('A controlled aerobic session.')).toBeVisible()
   await expect(page.getByText('I will inspect the workout file.')).toBeHidden()
+  expect(startCalls).toBe(1)
+  expect(eventConnections).toBe(2)
+  await expect(page.getByText('Running in the background…')).toBeHidden()
+  await expect(page.getByRole('button', { name: 'Send' })).toBeVisible()
+})
+
+test('discards provisional Copilot narration when a background run is stopped', async ({ page }) => {
+  const narration = 'I will inspect the workout file.'
+  let runId = ''
+  let releaseCancellation = () => {}
+  const cancellation = new Promise<void>((resolve) => {
+    releaseCancellation = resolve
+  })
+
+  await page.route('**/api/analysis-runs', async (route) => {
+    runId = (route.request().postDataJSON() as { run_id: string }).run_id
+    await route.fulfill({
+      json: {
+        id: runId,
+        status: 'running',
+        error: null,
+        last_event_id: 0,
+        created_at: new Date().toISOString(),
+        finished_at: null,
+      },
+    })
+  })
+  await page.route('**/api/analysis-runs/*/cancel', async (route) => {
+    releaseCancellation()
+    await route.fulfill({
+      json: {
+        id: runId,
+        status: 'cancelling',
+        error: null,
+        last_event_id: 2,
+        created_at: new Date().toISOString(),
+        finished_at: null,
+      },
+    })
+  })
+  await page.route('**/api/analysis-runs/*/events?*', async (route) => {
+    const after = new URL(route.request().url()).searchParams.get('after')
+    if (after === '0') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body:
+          'id: 1\nevent: start\ndata: {"backend":"copilot"}\n\n' +
+          `id: 2\nevent: delta\ndata: ${JSON.stringify({ text: narration })}\n\n`,
+      })
+      return
+    }
+    await cancellation
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: 'id: 3\nevent: cancelled\ndata: {}\n\n',
+    })
+  })
+
+  await page.goto('/analyze')
+  await page.getByRole('textbox', { name: 'Message' }).fill('Review this workout')
+  await page.getByRole('button', { name: 'Send' }).tap()
+  await expect(page.getByText(narration)).toBeVisible()
+
+  await page.getByRole('button', { name: 'Stop' }).tap()
+  await expect(page.getByText(narration)).toBeHidden()
   await expect(page.getByRole('button', { name: 'Send' })).toBeVisible()
 })

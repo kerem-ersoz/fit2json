@@ -591,19 +591,106 @@ def stream_openai_compatible(
     max_chars: int = 200_000,
     athlete_profile: Optional[str] = None,
     system_prompt: Optional[str] = None,
+    keepalive_interval: Optional[float] = None,
 ) -> Iterator[str]:
     """Yield analysis text chunks from an OpenAI-compatible chat endpoint."""
     client = _make_client(base_url, api_key)
-    resolved_model = model or _first_available_model(client) or "local-model"
     messages = _build_openai_messages(
         prompt, workout_json, memory_digest, max_chars, athlete_profile, system_prompt
     )
 
-    resp = client.chat.completions.create(model=resolved_model, messages=messages, stream=True)
-    for event in resp:
-        delta = event.choices[0].delta.content if event.choices else None
-        if delta:
-            yield delta
+    resp = None
+    reader: Optional[threading.Thread] = None
+    response_holder: Dict[str, Any] = {}
+    cancelled = threading.Event()
+    heartbeat = keepalive_interval if keepalive_interval and keepalive_interval > 0 else None
+
+    def event_text(event) -> Optional[str]:
+        return event.choices[0].delta.content if event.choices else None
+
+    try:
+        if heartbeat is None:
+            resolved_model = model or _first_available_model(client) or "local-model"
+            resp = client.chat.completions.create(
+                model=resolved_model,
+                messages=messages,
+                stream=True,
+            )
+            for event in resp:
+                delta = event_text(event)
+                if delta:
+                    yield delta
+        else:
+            messages_queue: queue.Queue = queue.Queue()
+
+            def read_events() -> None:
+                try:
+                    if cancelled.is_set():
+                        return
+                    resolved_model = model or _first_available_model(client) or "local-model"
+                    if cancelled.is_set():
+                        return
+                    response = client.chat.completions.create(
+                        model=resolved_model,
+                        messages=messages,
+                        stream=True,
+                    )
+                    response_holder["response"] = response
+                    if cancelled.is_set():
+                        close_response = getattr(response, "close", None)
+                        if close_response is not None:
+                            close_response()
+                        return
+                    for event in response:
+                        if cancelled.is_set():
+                            break
+                        messages_queue.put(("event", event))
+                except Exception as exc:
+                    messages_queue.put(("error", exc))
+                finally:
+                    messages_queue.put(("end", None))
+
+            reader = threading.Thread(
+                target=read_events,
+                name="fit2json-openai-stream",
+                daemon=True,
+            )
+            reader.start()
+
+            while True:
+                try:
+                    kind, value = messages_queue.get(timeout=heartbeat)
+                except queue.Empty:
+                    yield ""
+                    continue
+                if kind == "event":
+                    delta = event_text(value)
+                    if delta:
+                        yield delta
+                elif kind == "error":
+                    raise value
+                else:
+                    break
+    finally:
+        cancelled.set()
+        response = resp if resp is not None else response_holder.get("response")
+        try:
+            close_response = getattr(response, "close", None)
+            if close_response is not None:
+                close_response()
+        finally:
+            try:
+                close_client = getattr(client, "close", None)
+                if close_client is not None:
+                    close_client()
+            finally:
+                if reader is not None:
+                    reader.join(timeout=1)
+                late_response = response_holder.get("response")
+                if late_response is not None and late_response is not response:
+                    close_late_response = getattr(late_response, "close", None)
+                    if close_late_response is not None:
+                        close_late_response()
 
 
 def run_openai_compatible(

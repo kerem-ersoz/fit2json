@@ -356,3 +356,125 @@ class TestRunOpenAICompatible:
             stream=True,
         )
         assert out == "Hello world"
+
+    def test_keepalive_and_close_interrupt_blocked_stream(self, monkeypatch):
+        class BlockingResponse:
+            def __init__(self):
+                self.released = threading.Event()
+                self.closed = threading.Event()
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                self.released.wait(timeout=2)
+                raise StopIteration
+
+            def close(self):
+                self.closed.set()
+                self.released.set()
+
+        response = BlockingResponse()
+
+        class BlockingClient:
+            class models:
+                @staticmethod
+                def list():
+                    return type("L", (), {"data": [type("M", (), {"id": "mock-model"})()]})()
+
+            class chat:
+                class completions:
+                    @staticmethod
+                    def create(model, messages, stream=False):
+                        return response
+
+        monkeypatch.setattr(analyzer, "_make_client", lambda base_url, api_key: BlockingClient())
+        stream = analyzer.stream_openai_compatible(
+            prompt="p",
+            workout_json="{}",
+            base_url="http://x/v1",
+            api_key="k",
+            keepalive_interval=0.01,
+        )
+
+        assert next(stream) == ""
+        stream.close()
+        assert response.closed.is_set()
+
+    def test_keepalive_can_cancel_blocked_request_setup(self, monkeypatch):
+        started = threading.Event()
+        released = threading.Event()
+        closed = threading.Event()
+
+        class BlockingCompletions:
+            @staticmethod
+            def create(model, messages, stream=False):
+                started.set()
+                released.wait(timeout=2)
+                raise RuntimeError("client closed")
+
+        class BlockingClient:
+            chat = type("Chat", (), {"completions": BlockingCompletions()})()
+
+            @staticmethod
+            def close():
+                closed.set()
+                released.set()
+
+        monkeypatch.setattr(analyzer, "_make_client", lambda base_url, api_key: BlockingClient())
+        stream = analyzer.stream_openai_compatible(
+            prompt="p",
+            workout_json="{}",
+            base_url="http://x/v1",
+            api_key="k",
+            model="known-model",
+            keepalive_interval=0.01,
+        )
+
+        assert next(stream) == ""
+        assert started.is_set()
+        stream.close()
+        assert closed.is_set()
+
+    def test_late_response_is_closed_after_setup_cancellation(self, monkeypatch):
+        setup_started = threading.Event()
+        allow_response = threading.Event()
+        response_closed = threading.Event()
+
+        class LateResponse:
+            def __iter__(self):
+                raise AssertionError("cancelled response must not be consumed")
+
+            @staticmethod
+            def close():
+                response_closed.set()
+
+        class LateCompletions:
+            @staticmethod
+            def create(model, messages, stream=False):
+                setup_started.set()
+                allow_response.wait(timeout=3)
+                return LateResponse()
+
+        class LateClient:
+            chat = type("Chat", (), {"completions": LateCompletions()})()
+
+            @staticmethod
+            def close():
+                pass
+
+        monkeypatch.setattr(analyzer, "_make_client", lambda base_url, api_key: LateClient())
+        stream = analyzer.stream_openai_compatible(
+            prompt="p",
+            workout_json="{}",
+            base_url="http://x/v1",
+            api_key="k",
+            model="known-model",
+            keepalive_interval=0.01,
+        )
+
+        assert next(stream) == ""
+        assert setup_started.is_set()
+        stream.close()
+        allow_response.set()
+        assert response_closed.wait(timeout=1)

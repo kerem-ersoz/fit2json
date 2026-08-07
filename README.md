@@ -494,6 +494,13 @@ the other's web service on port 8000. Tune it with `FITSIFT_PORT`, `POLL_INTERVA
 with `fit2json fetch garmin --days 1 --token-dir ~/.fit2json/garmintokens` (enter MFA if
 prompted), after which the poller resumes automatically.
 
+Interactive analyses are owned by the web server once accepted. Switching apps, locking
+the device, navigating away, or losing the browser connection only detaches the live
+view; reconnecting replays missed output without starting a second model call. Completed
+chat responses and terminal errors are written to `~/.fit2json/chats`, while single-workout
+analyses continue to land in the memory corpus. Durable run IDs also prevent an uncertain
+request retry after a web-server restart from launching duplicate inference.
+
 ### Script commands
 
 | Command | What it does |

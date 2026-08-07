@@ -75,7 +75,7 @@ flowchart LR
 
 | Component | Runtime | Entry point | Reads | Writes |
 |-----------|---------|-------------|-------|--------|
-| **Web UI** (FitSift) | container `fitsift-web` | `fit2json serve --host 0.0.0.0` | `library/json`, `memory/`, `profile.json` | — |
+| **Web UI** (FitSift) | container `fitsift-web` | `fit2json serve --host 0.0.0.0` | `library/json`, `memory/`, `profile.json`, `chats/` | `memory/`, `profile.json`, `chats/` |
 | **Poller** | container `fitsift-poller` | `fit2json fetch garmin --watch` | Garmin Connect, `garmintokens/` | `library/fit`, `library/json` |
 | **Auto-analyzer** | **host** process | `fit2json analyze --watch` | `library/json`, `memory/index.jsonl` | `memory/` |
 | **Copilot CLI** | **host** | `copilot` (invoked by analyzer) | workouts by path, `memory/` | — (returns text) |
@@ -137,7 +137,8 @@ read/written directly by the host processes):
 │   └── json/           # one lossless JSON per activity       ← poller -o / UI library
 ├── memory/             # analysis corpus (per-sport .md)      ← analyzer / UI Memory tab
 │   └── index.jsonl     # one line per analysis (dedup + recall key)
-├── chats/              # saved chat sessions (one .json each)  ← UI chat pane (resume later)
+├── chats/              # saved conversations                  ← UI chat pane (resume later)
+│   └── .analysis-runs/ # durable run ids/status (retry dedup)
 ├── garmintokens/       # cached Garmin session (GARMINTOKENS) ← poller
 ├── profile.json        # athlete "You" profile                ← UI / analyzer personalization
 ├── logs/analyzer.log   # host analyzer output                 ← scripts/fitsift
@@ -256,18 +257,29 @@ re‑running it.
 ## 9. Web request flow
 
 The FastAPI app mounts the JSON API under `/api` and serves the built SPA for everything
-else (with an `index.html` fallback for client‑side routes). In‑container, the `copilot`
-and `localhost` analysis backends are unreachable — so the UI is a **reader** of the
-library + memory the host pipeline produces; new analyses are generated host‑side.
+else (with an `index.html` fallback for client‑side routes). Interactive analysis uses a
+server-owned run: `POST /analysis-runs` starts one worker, and numbered SSE events can be
+replayed after a browser disconnect without restarting inference. Chat runs persist their
+running/terminal state and assistant result in `chats/`; single-workout runs save to
+`memory/`. Small run markers under `chats/.analysis-runs/` keep POST retries idempotent
+across server restarts. A restart cannot resume model inference, so any run left active is
+converted to an explicit interrupted failure on the next start.
+
+In-container, the `copilot` and `localhost` analysis backends remain unreachable — use the
+host-mode web process for live analysis with those backends.
 
 ```mermaid
 flowchart LR
-  B["Browser (SPA)"] -->|"/api/*"| API["FastAPI routes<br/>activities · memory · profile · analyze · ingest · meta"]
+  B["Browser (SPA)"] -->|"start run"| API["FastAPI routes<br/>activities · memory · profile · analysis runs · chats"]
+  B -.->|"reconnect + replay numbered SSE"| API
   B -->|"/ , /assets, client routes"| SPA["StaticFiles + index.html fallback"]
+  API --> RUN["Background analysis worker<br/>(independent of browser connection)"]
   API --> SVC["services.py<br/>Library (mtime-signature cache)"]
   SVC --> LIB["~/.fit2json/library/json"]
   SVC --> MEM["~/.fit2json/memory"]
-  API -.->|"analyze: copilot/localhost<br/>host-only, not in container"| X(("host only"))
+  RUN --> CHAT["~/.fit2json/chats"]
+  RUN --> MEM
+  RUN -.->|"copilot/localhost<br/>host-mode only"| X(("host only"))
 ```
 
 ---

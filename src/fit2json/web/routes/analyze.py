@@ -16,14 +16,16 @@ from __future__ import annotations
 import json
 from typing import Callable, Iterator, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from fit2json import analyzer
+from fit2json.chats import ChatAnalysisInProgress, ChatStore, sanitize_id
 from fit2json.memory import MemoryStore
 from fit2json.web import services
+from fit2json.web.analysis_runs import AnalysisRun, get_analysis_run_registry
 from fit2json.web.config import get_settings
-from fit2json.web.schemas import AnalyzeRequest
+from fit2json.web.schemas import AnalysisRunInfo, AnalysisRunStart, AnalyzeRequest
 from fit2json.web.sse import SSE_HEADERS, SSE_HEARTBEAT_SECONDS, stream_text_events
 from fit2json.web.sse import sse as _sse
 
@@ -56,6 +58,7 @@ def _stream_text(
         return analyzer.stream_openai_compatible(
             prompt=prompt, workout_json="", base_url=url, api_key=key, memory_digest=None,
             model=model, athlete_profile=athlete_profile,
+            keepalive_interval=SSE_HEARTBEAT_SECONDS,
         )
     raise ValueError(f"Unsupported analysis backend: {backend}")
 
@@ -154,6 +157,11 @@ def _synthesis_prompt(blocks, user_prompt: str) -> str:
 
 @router.post("/analyze")
 def analyze(req: AnalyzeRequest):
+    gen = _prepare_event_gen(req)
+    return StreamingResponse(gen, media_type="text/event-stream", headers=SSE_HEADERS)
+
+
+def _prepare_event_gen(req: AnalyzeRequest) -> Iterator[str]:
     if not req.prompt.strip():
         raise HTTPException(status_code=422, detail="A prompt is required.")
 
@@ -164,16 +172,193 @@ def analyze(req: AnalyzeRequest):
 
     # No selection → freeform: the agent finds the relevant workouts itself.
     if not ids:
-        return StreamingResponse(
-            _freeform_event_gen(req, resolved), media_type="text/event-stream", headers=SSE_HEADERS
-        )
+        return _freeform_event_gen(req, resolved)
 
     found = services.get_activities_for_analysis(ids)
     if found is None:
         raise HTTPException(status_code=404, detail="Activity not found")
 
-    gen = _multi_event_gen(req, resolved, found, ids) if len(found) > 1 else _single_event_gen(req, resolved, found[0])
-    return StreamingResponse(gen, media_type="text/event-stream", headers=SSE_HEADERS)
+    return (
+        _multi_event_gen(req, resolved, found, ids)
+        if len(found) > 1
+        else _single_event_gen(req, resolved, found[0])
+    )
+
+
+def _run_info(run: AnalysisRun) -> AnalysisRunInfo:
+    return AnalysisRunInfo(**run.info())
+
+
+@router.post("/analysis-runs", response_model=AnalysisRunInfo, status_code=202)
+def start_analysis_run(body: AnalysisRunStart) -> AnalysisRunInfo:
+    """Start inference independently of the response connection."""
+    settings = get_settings()
+    registry = get_analysis_run_registry(settings.chats_dir)
+
+    supplied_chat_fields = (body.chat_id, body.assistant_message_id, body.chat)
+    if any(value is not None for value in supplied_chat_fields) and not all(
+        value is not None for value in supplied_chat_fields
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="chat_id, assistant_message_id, and chat must be provided together.",
+        )
+
+    chat_id = sanitize_id(body.chat_id) if body.chat_id is not None else None
+    owner = (chat_id, body.assistant_message_id)
+    store = ChatStore(settings.chats_dir) if chat_id is not None else None
+
+    def finish(
+        status: str,
+        content: str,
+        error: Optional[str],
+        thinking_summary: str,
+        thinking: str,
+    ) -> None:
+        if store is not None and chat_id is not None and body.assistant_message_id is not None:
+            store.finish_analysis(
+                chat_id,
+                body.run_id,
+                body.assistant_message_id,
+                status,
+                content,
+                error,
+                thinking_summary,
+                thinking,
+            )
+
+    def persist_cancelled() -> None:
+        if (
+            store is None
+            or chat_id is None
+            or body.chat is None
+            or body.assistant_message_id is None
+        ):
+            raise HTTPException(status_code=409, detail="Analysis run id is already in use.")
+        store.start_analysis(
+            chat_id,
+            body.chat.model_dump(),
+            body.run_id,
+            body.assistant_message_id,
+        )
+        store.finish_analysis(
+            chat_id,
+            body.run_id,
+            body.assistant_message_id,
+            "cancelled",
+            "",
+        )
+
+    def resolve_existing(run: AnalysisRun) -> AnalysisRunInfo:
+        if run.matches_owner(owner):
+            return _run_info(run)
+        try:
+            if run.claim_cancelled(owner, finish, persist_cancelled):
+                return _run_info(run)
+        except ChatAnalysisInProgress as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=f"This chat already has an active analysis ({exc.run_id}).",
+            ) from exc
+        if run.matches_owner(owner):
+            return _run_info(run)
+        raise HTTPException(status_code=409, detail="Analysis run id is already in use.")
+
+    existing = registry.get(body.run_id)
+    if existing is not None:
+        return resolve_existing(existing)
+
+    persisted = registry.persisted(body.run_id)
+    if persisted is not None:
+        info, persisted_owner = persisted
+        if persisted_owner == owner:
+            return AnalysisRunInfo(**info)
+        if info["status"] == "cancelled" and persisted_owner == (None, None):
+            persist_cancelled()
+            claimed = registry.claim_persisted_cancelled(body.run_id, owner)
+            if claimed is not None:
+                return AnalysisRunInfo(**claimed)
+        raise HTTPException(status_code=409, detail="Analysis run id is already in use.")
+
+    source = _prepare_event_gen(body.analysis)
+
+    run, created = registry.create(body.run_id, source, owner, finish)
+    if not created:
+        close = getattr(source, "close", None)
+        if close is not None:
+            close()
+        return resolve_existing(run)
+
+    try:
+        if (
+            store is not None
+            and chat_id is not None
+            and body.chat is not None
+            and body.assistant_message_id is not None
+        ):
+            store.start_analysis(
+                chat_id,
+                body.chat.model_dump(),
+                body.run_id,
+                body.assistant_message_id,
+            )
+        run.start()
+    except ChatAnalysisInProgress as exc:
+        registry.discard(body.run_id)
+        close = getattr(source, "close", None)
+        if close is not None:
+            close()
+        raise HTTPException(
+            status_code=409,
+            detail=f"This chat already has an active analysis ({exc.run_id}).",
+        ) from exc
+    except Exception:
+        registry.discard(body.run_id)
+        if store is not None and chat_id is not None and body.assistant_message_id is not None:
+            store.finish_analysis(
+                chat_id,
+                body.run_id,
+                body.assistant_message_id,
+                "failed",
+                "",
+                "Analysis could not be started.",
+            )
+        close = getattr(source, "close", None)
+        if close is not None:
+            close()
+        raise
+    return _run_info(run)
+
+
+@router.get("/analysis-runs/{run_id}", response_model=AnalysisRunInfo)
+def get_analysis_run(run_id: str) -> AnalysisRunInfo:
+    run = get_analysis_run_registry(get_settings().chats_dir).get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Analysis run not found")
+    return _run_info(run)
+
+
+@router.get("/analysis-runs/{run_id}/events")
+def analysis_run_events(run_id: str, after: int = Query(default=0, ge=0)):
+    run = get_analysis_run_registry(get_settings().chats_dir).get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Analysis run not found")
+    return StreamingResponse(
+        run.events(after),
+        media_type="text/event-stream",
+        headers=SSE_HEADERS,
+    )
+
+
+@router.post("/analysis-runs/{run_id}/cancel", response_model=AnalysisRunInfo)
+def cancel_analysis_run(run_id: str) -> AnalysisRunInfo:
+    registry = get_analysis_run_registry(get_settings().chats_dir)
+    run, persisted = registry.cancel(run_id)
+    if persisted is not None:
+        info = persisted
+        return AnalysisRunInfo(**info)
+    assert run is not None
+    return _run_info(run)
 
 
 def _freeform_event_gen(req: AnalyzeRequest, resolved: str) -> Iterator[str]:
@@ -209,6 +394,7 @@ def _freeform_event_gen(req: AnalyzeRequest, resolved: str) -> Iterator[str]:
             return analyzer.stream_openai_compatible(
                 prompt=effective_prompt, workout_json=index, base_url=url, api_key=key,
                 memory_digest=None, model=req.model, athlete_profile=athlete_profile,
+                keepalive_interval=SSE_HEARTBEAT_SECONDS,
             )
         raise ValueError(f"Unsupported analysis backend: {resolved}")
 
@@ -270,6 +456,7 @@ def _single_event_gen(req: AnalyzeRequest, resolved: str, found_one) -> Iterator
                 memory_digest=digest,
                 model=req.model,
                 athlete_profile=athlete_profile,
+                keepalive_interval=SSE_HEARTBEAT_SECONDS,
             )
         raise ValueError(f"Unsupported analysis backend: {resolved}")
 
