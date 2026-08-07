@@ -335,6 +335,100 @@ test('reconnects to background thinking without starting twice', async ({ page }
   await expect(page.getByRole('button', { name: 'Send' })).toBeVisible()
 })
 
+test('switches away from a running chat without restoring it from summary polling', async ({
+  page,
+}) => {
+  const timestamp = '2026-08-06T20:00:00Z'
+  const runningChat = {
+    id: 'chat-running',
+    title: 'Current running chat',
+    created_at: timestamp,
+    updated_at: timestamp,
+    backend: 'ollama',
+    model: 'auto',
+    reasoning_effort: '',
+    activity_ids: [],
+    messages: [
+      { id: 'running-user', role: 'user', content: 'Current running question' },
+      { id: 'running-assistant', role: 'assistant', content: 'Current partial answer' },
+    ],
+    analysis_run: {
+      id: 'run-current',
+      assistant_message_id: 'running-assistant',
+      status: 'running',
+      error: null,
+      started_at: timestamp,
+      finished_at: null,
+    },
+  }
+  const savedChat = {
+    id: 'chat-saved',
+    title: 'Older saved chat',
+    created_at: timestamp,
+    updated_at: timestamp,
+    backend: 'ollama',
+    model: 'auto',
+    reasoning_effort: '',
+    activity_ids: [],
+    messages: [
+      { id: 'saved-user', role: 'user', content: 'Older saved question' },
+      { id: 'saved-assistant', role: 'assistant', content: 'Older saved answer' },
+    ],
+    analysis_run: null,
+  }
+  let runningChatLoads = 0
+
+  await page.addInitScript((chatId) => {
+    localStorage.setItem('fitsift-active-chat', chatId)
+  }, runningChat.id)
+  await page.route('**/api/chats', async (route) => {
+    await route.fulfill({
+      json: {
+        chats: [
+          {
+            ...runningChat,
+            message_count: runningChat.messages.length,
+            analysis_status: 'running',
+          },
+          {
+            ...savedChat,
+            message_count: savedChat.messages.length,
+            analysis_status: null,
+          },
+        ],
+      },
+    })
+  })
+  await page.route('**/api/chats/*', async (route) => {
+    const id = decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-1) ?? '')
+    if (id === runningChat.id) {
+      runningChatLoads += 1
+      await route.fulfill({ json: runningChat })
+      return
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    await route.fulfill({ json: savedChat })
+  })
+  await page.route('**/api/analysis-runs/run-current/events?*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: 'id: 1\nevent: start\ndata: {"backend":"ollama"}\n\n',
+    })
+  })
+
+  await page.goto('/analyze')
+  await expect(page.getByText('Current running question')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Chat history' }).tap()
+  await page.getByRole('button', { name: /^Older saved chat/ }).tap()
+
+  await expect(page.getByText('Older saved answer')).toBeVisible()
+  await expect(page.getByText('Current running question')).toBeHidden()
+  expect(runningChatLoads).toBe(1)
+})
+
 test('discards provisional Copilot narration when a background run is stopped', async ({ page }) => {
   const narration = 'I will inspect the workout file.'
   let runId = ''
