@@ -1,13 +1,23 @@
 import { useMemo, useState } from 'react'
 import { VegaLite } from 'react-vega'
 import { usePrefersDarkMode } from '../../lib/usePrefersDarkMode'
+import { withReadableLineScales } from './chartSpec'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function objectOrEmpty(value: unknown): Record<string, unknown> {
+  return isObject(value) ? value : {}
+}
 
 /**
  * Renders one LLM-authored Vega-Lite spec (from a ```fitsift-chart block).
  * Loaded lazily (Vega is heavy) so it only ships when an analysis has a chart.
- * Width is forced to "container" for responsiveness; remote data is refused.
+ * Width is forced to "container" for responsiveness; line-chart Y scales are
+ * kept readable without changing explicit domains; remote data is refused.
  */
 export default function ChartBlock({ spec }: { spec: string }) {
   const [renderError, setRenderError] = useState<string | null>(null)
@@ -32,7 +42,8 @@ export default function ChartBlock({ spec }: { spec: string }) {
     return <ChartError message="Couldn't render this chart." raw={spec} />
   }
 
-  const authoredConfig = parsed.obj.config ?? {}
+  const normalizedSpec = withReadableLineScales(parsed.obj)
+  const authoredConfig = objectOrEmpty(normalizedSpec.config)
   const darkConfig = {
     axis: dark
       ? {
@@ -49,17 +60,17 @@ export default function ChartBlock({ spec }: { spec: string }) {
   }
   const responsiveSpec: any = {
     $schema: 'https://vega.github.io/schema/vega-lite/v5.json',
-    ...parsed.obj,
+    ...normalizedSpec,
     ...(dark ? { background: '#000000' } : {}),
     width: 'container',
     autosize: { type: 'fit', contains: 'padding' },
     config: {
       ...authoredConfig,
       ...darkConfig,
-      axis: { ...authoredConfig.axis, ...darkConfig.axis },
-      legend: { ...authoredConfig.legend, ...darkConfig.legend },
-      title: { ...authoredConfig.title, ...darkConfig.title },
-      view: { ...authoredConfig.view, ...darkConfig.view },
+      axis: { ...objectOrEmpty(authoredConfig.axis), ...darkConfig.axis },
+      legend: { ...objectOrEmpty(authoredConfig.legend), ...darkConfig.legend },
+      title: { ...objectOrEmpty(authoredConfig.title), ...darkConfig.title },
+      view: { ...objectOrEmpty(authoredConfig.view), ...darkConfig.view },
     },
   }
   if (typeof responsiveSpec.height !== 'number') responsiveSpec.height = 240

@@ -881,6 +881,8 @@ def test_analyze_appends_chart_guidance(client, monkeypatch):
     assert r.status_code == 200
     # Chart guidance is appended to the model's prompt by default…
     assert "fitsift-chart" in captured["prompt"]
+    assert "`scale.zero` to `false`" in captured["prompt"]
+    assert "Keep zero baselines for bar and area charts" in captured["prompt"]
     # …but memory keeps the athlete's original prompt.
     analyses = client.get(f"/api/activities/{aid}/analyses").json()["analyses"]
     assert analyses[0]["prompt"] == "Summarize"
